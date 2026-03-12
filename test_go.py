@@ -4,8 +4,14 @@ import asyncio
 import aiohttp
 import json
 import sys
+import uuid
 
 BASE_URL = "http://127.0.0.1:8080"
+
+
+def unique_topic(prefix="test"):
+    """Generate unique topic name."""
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
 async def test_health():
@@ -24,9 +30,11 @@ async def test_topic_crud():
     """Test topic create, list, get."""
     print("\nTest: Topic CRUD")
     async with aiohttp.ClientSession() as session:
+        topic = unique_topic("crud")
+
         # Create
         async with session.post(f"{BASE_URL}/topics", json={
-            "name": "test-crud",
+            "name": topic,
             "retention_days": 7
         }) as resp:
             assert resp.status == 201
@@ -40,9 +48,9 @@ async def test_topic_crud():
             print(f"  ✓ Listed {len(data)} topics")
 
         # Get
-        async with session.get(f"{BASE_URL}/topics/test-crud") as resp:
+        async with session.get(f"{BASE_URL}/topics/{topic}") as resp:
             data = await resp.json()
-            assert data["name"] == "test-crud"
+            assert data["name"] == topic
             print(f"  ✓ Got topic info")
 
         return True
@@ -52,11 +60,13 @@ async def test_produce_consume():
     """Test produce and consume."""
     print("\nTest: Produce and Consume")
     async with aiohttp.ClientSession() as session:
+        topic = unique_topic("pc")
+
         # Create topic
-        await session.post(f"{BASE_URL}/topics", json={"name": "test-pc"})
+        await session.post(f"{BASE_URL}/topics", json={"name": topic})
 
         # Produce
-        async with session.post(f"{BASE_URL}/topics/test-pc/messages", json={
+        async with session.post(f"{BASE_URL}/topics/{topic}/messages", json={
             "payload": {"test": "data"},
             "headers": {"x-id": "123"}
         }) as resp:
@@ -66,7 +76,7 @@ async def test_produce_consume():
             print(f"  ✓ Produced message: {msg_id[:20]}...")
 
         # Consume
-        async with session.get(f"{BASE_URL}/topics/test-pc/messages", params={
+        async with session.get(f"{BASE_URL}/topics/{topic}/messages", params={
             "group": "test-group",
             "max": 10,
             "timeout": 2
@@ -86,7 +96,7 @@ async def test_produce_consume():
             print(f"  ✓ Acknowledged message")
 
         # Verify empty
-        async with session.get(f"{BASE_URL}/topics/test-pc/messages", params={
+        async with session.get(f"{BASE_URL}/topics/{topic}/messages", params={
             "group": "test-group",
             "max": 10,
             "timeout": 1
@@ -102,18 +112,20 @@ async def test_consumer_groups():
     """Test consumer group load balancing."""
     print("\nTest: Consumer Groups (Load Balancing)")
     async with aiohttp.ClientSession() as session:
+        topic = unique_topic("groups")
+
         # Create topic
-        await session.post(f"{BASE_URL}/topics", json={"name": "test-groups"})
+        await session.post(f"{BASE_URL}/topics", json={"name": topic})
 
         # Produce 5 messages
         for i in range(5):
-            await session.post(f"{BASE_URL}/topics/test-groups/messages", json={
+            await session.post(f"{BASE_URL}/topics/{topic}/messages", json={
                 "payload": {"seq": i}
             })
         print(f"  ✓ Produced 5 messages")
 
         # Consumer 1 (same group)
-        async with session.get(f"{BASE_URL}/topics/test-groups/messages", params={
+        async with session.get(f"{BASE_URL}/topics/{topic}/messages", params={
             "group": "workers",
             "max": 10,
             "timeout": 2
@@ -123,7 +135,7 @@ async def test_consumer_groups():
             print(f"  Consumer 1 got: {len(msgs1)} messages")
 
         # Consumer 2 (same group - should get rest)
-        async with session.get(f"{BASE_URL}/topics/test-groups/messages", params={
+        async with session.get(f"{BASE_URL}/topics/{topic}/messages", params={
             "group": "workers",
             "max": 10,
             "timeout": 2
@@ -146,18 +158,20 @@ async def test_different_groups():
     """Test different groups see same messages (broadcast)."""
     print("\nTest: Different Groups (Broadcast)")
     async with aiohttp.ClientSession() as session:
+        topic = unique_topic("broadcast")
+
         # Create topic
-        await session.post(f"{BASE_URL}/topics", json={"name": "test-broadcast"})
+        await session.post(f"{BASE_URL}/topics", json={"name": topic})
 
         # Produce 3 messages
         for i in range(3):
-            await session.post(f"{BASE_URL}/topics/test-broadcast/messages", json={
+            await session.post(f"{BASE_URL}/topics/{topic}/messages", json={
                 "payload": {"seq": i}
             })
         print(f"  ✓ Produced 3 messages")
 
         # Group A
-        async with session.get(f"{BASE_URL}/topics/test-broadcast/messages", params={
+        async with session.get(f"{BASE_URL}/topics/{topic}/messages", params={
             "group": "group-a",
             "max": 10,
             "timeout": 2
@@ -167,7 +181,7 @@ async def test_different_groups():
             print(f"  Group A got: {len(msgs_a)} messages")
 
         # Group B
-        async with session.get(f"{BASE_URL}/topics/test-broadcast/messages", params={
+        async with session.get(f"{BASE_URL}/topics/{topic}/messages", params={
             "group": "group-b",
             "max": 10,
             "timeout": 2
@@ -185,17 +199,19 @@ async def test_visibility_timeout():
     """Test visibility timeout and redelivery."""
     print("\nTest: Visibility Timeout (Message Recovery)")
     async with aiohttp.ClientSession() as session:
+        topic = unique_topic("timeout")
+
         # Create topic
-        await session.post(f"{BASE_URL}/topics", json={"name": "test-timeout"})
+        await session.post(f"{BASE_URL}/topics", json={"name": topic})
 
         # Produce
-        await session.post(f"{BASE_URL}/topics/test-timeout/messages", json={
+        await session.post(f"{BASE_URL}/topics/{topic}/messages", json={
             "payload": {"test": "timeout"}
         })
         print(f"  ✓ Produced 1 message")
 
         # Consumer 1 claims (5s visibility)
-        async with session.get(f"{BASE_URL}/topics/test-timeout/messages", params={
+        async with session.get(f"{BASE_URL}/topics/{topic}/messages", params={
             "group": "timeout-group",
             "max": 1,
             "timeout": 1,
@@ -211,7 +227,7 @@ async def test_visibility_timeout():
         await asyncio.sleep(6)
 
         # Consumer 2 should see it
-        async with session.get(f"{BASE_URL}/topics/test-timeout/messages", params={
+        async with session.get(f"{BASE_URL}/topics/{topic}/messages", params={
             "group": "timeout-group",
             "max": 1,
             "timeout": 2
