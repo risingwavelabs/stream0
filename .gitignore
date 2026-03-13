@@ -1,4 +1,16 @@
+# Binaries
+stream0
+agentbus
+
+# Database files
 *.db
 *.db-shm
 *.db-wal
-agentbus
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store

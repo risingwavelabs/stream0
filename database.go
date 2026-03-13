@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // Message represents a message in a topic
@@ -37,7 +37,7 @@ type Database struct {
 
 // NewDatabase creates and initializes the database
 func NewDatabase(path string) (*Database, error) {
-	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
+	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		return nil, err
 	}
@@ -45,6 +45,16 @@ func NewDatabase(path string) (*Database, error) {
 	// Set connection pool
 	db.SetMaxOpenConns(1) // SQLite supports one writer
 	db.SetMaxIdleConns(1)
+
+	// Set pragmas after opening
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to set WAL mode: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA synchronous=NORMAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to set synchronous mode: %w", err)
+	}
 
 	d := &Database{db: db}
 	if err := d.initSchema(); err != nil {

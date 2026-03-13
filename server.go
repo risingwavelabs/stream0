@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
 	"strconv"
 	"time"
@@ -45,7 +46,7 @@ type TopicCreateRequest struct {
 }
 
 // NewServer creates a new server
-func NewServer(db *Database, cfg ServerConfig) *Server {
+func NewServer(db *Database, cfg ServerConfig, authCfg AuthConfig) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 
@@ -64,7 +65,7 @@ func NewServer(db *Database, cfg ServerConfig) *Server {
 		},
 	}
 
-	s.setupRoutes()
+	s.setupRoutes(authCfg)
 	return s
 }
 
@@ -83,15 +84,42 @@ func corsMiddleware() gin.HandlerFunc {
 	}
 }
 
-func (s *Server) setupRoutes() {
+func (s *Server) setupRoutes(authCfg AuthConfig) {
+	// Public routes
 	s.router.GET("/health", s.healthHandler)
-	s.router.GET("/topics", s.listTopicsHandler)
-	s.router.POST("/topics", s.createTopicHandler)
-	s.router.GET("/topics/:topic", s.getTopicHandler)
-	s.router.POST("/topics/:topic/messages", s.produceMessageHandler)
-	s.router.GET("/topics/:topic/messages", s.consumeMessagesHandler)
-	s.router.POST("/messages/:message_id/ack", s.acknowledgeMessageHandler)
-	s.router.GET("/topics/:topic/subscribe", s.websocketHandler)
+
+	// Protected routes
+	api := s.router.Group("/")
+	if len(authCfg.APIKeys) > 0 {
+		api.Use(apiKeyAuth(authCfg.APIKeys))
+	}
+	api.GET("/topics", s.listTopicsHandler)
+	api.POST("/topics", s.createTopicHandler)
+	api.GET("/topics/:topic", s.getTopicHandler)
+	api.POST("/topics/:topic/messages", s.produceMessageHandler)
+	api.GET("/topics/:topic/messages", s.consumeMessagesHandler)
+	api.POST("/messages/:message_id/ack", s.acknowledgeMessageHandler)
+	api.GET("/topics/:topic/subscribe", s.websocketHandler)
+}
+
+// apiKeyAuth returns middleware that validates the X-API-Key header
+func apiKeyAuth(validKeys []string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		key := c.GetHeader("X-API-Key")
+		if key == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing X-API-Key header"})
+			return
+		}
+
+		for _, valid := range validKeys {
+			if subtle.ConstantTimeCompare([]byte(key), []byte(valid)) == 1 {
+				c.Next()
+				return
+			}
+		}
+
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid API key"})
+	}
 }
 
 // Run starts the server

@@ -13,16 +13,11 @@ HTTP-native event streaming for AI agents. Built in Go for performance and singl
 ## Quick Start
 
 ```bash
-# Download and run
-./agentbus
+# Build and run
+go build -o stream0 .
+./stream0
 
 # Server runs on http://127.0.0.1:8080
-```
-
-## Build from Source
-
-```bash
-go build -o agentbus .
 ```
 
 ## API Usage
@@ -62,9 +57,9 @@ python3 test_go.py
 ## Configuration
 
 Environment variables:
-- `STREAM0_HOST` - Bind address (default: 127.0.0.1)
-- `STREAM0_PORT` - Port (default: 8080)
-- `STREAM0_DB` - Database path (default: ./agentbus.db)
+- `STREAM0_SERVER_HOST` - Bind address (default: 127.0.0.1)
+- `STREAM0_SERVER_PORT` - Port (default: 8080)
+- `STREAM0_DB_PATH` - Database path (default: ./stream0.db)
 
 ## Architecture
 

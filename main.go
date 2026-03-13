@@ -40,7 +40,12 @@ func main() {
 	defer db.Close()
 
 	// Create server
-	server := NewServer(db, cfg.Server)
+	if len(cfg.Auth.APIKeys) > 0 {
+		log.WithField("keys", len(cfg.Auth.APIKeys)).Info("API key authentication enabled")
+	} else {
+		log.Warn("No API keys configured - all endpoints are unauthenticated")
+	}
+	server := NewServer(db, cfg.Server, cfg.Auth)
 
 	// Setup graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
