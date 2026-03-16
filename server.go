@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 )
@@ -43,6 +45,35 @@ type AckRequest struct {
 type TopicCreateRequest struct {
 	Name          string `json:"name" binding:"required"`
 	RetentionDays int    `json:"retention_days"`
+}
+
+// RequestReplyRequest represents a request-reply request
+type RequestReplyRequest struct {
+	Payload map[string]interface{} `json:"payload" binding:"required"`
+	Headers map[string]string      `json:"headers"`
+	Timeout float64                `json:"timeout"` // seconds, default 30
+}
+
+// ReplyRequest represents a reply to a request
+type ReplyRequest struct {
+	Payload map[string]interface{} `json:"payload" binding:"required"`
+	Headers map[string]string      `json:"headers"`
+	Group   string                 `json:"group"` // optional, ack original message
+}
+
+// --- v2 Inbox Model Request/Response types ---
+
+// RegisterAgentRequest represents a request to register an agent
+type RegisterAgentRequest struct {
+	ID string `json:"id" binding:"required"`
+}
+
+// SendInboxMessageRequest represents a request to send a message to an agent's inbox
+type SendInboxMessageRequest struct {
+	TaskID  string                 `json:"task_id" binding:"required"`
+	From    string                 `json:"from" binding:"required"`
+	Type    string                 `json:"type" binding:"required"`
+	Content map[string]interface{} `json:"content"`
 }
 
 // NewServer creates a new server
@@ -99,7 +130,17 @@ func (s *Server) setupRoutes(authCfg AuthConfig) {
 	api.POST("/topics/:topic/messages", s.produceMessageHandler)
 	api.GET("/topics/:topic/messages", s.consumeMessagesHandler)
 	api.POST("/messages/:message_id/ack", s.acknowledgeMessageHandler)
+	api.POST("/topics/:topic/request", s.requestReplyHandler)
+	api.POST("/messages/:message_id/reply", s.replyHandler)
 	api.GET("/topics/:topic/subscribe", s.websocketHandler)
+
+	// v2 Inbox Model routes
+	api.POST("/agents", s.registerAgentHandler)
+	api.DELETE("/agents/:agent_id", s.deleteAgentHandler)
+	api.POST("/agents/:agent_id/inbox", s.sendInboxMessageHandler)
+	api.GET("/agents/:agent_id/inbox", s.getInboxMessagesHandler)
+	api.POST("/inbox/messages/:message_id/ack", s.ackInboxMessageHandler)
+	api.GET("/tasks/:task_id/messages", s.getTaskMessagesHandler)
 }
 
 // apiKeyAuth returns middleware that validates the X-API-Key header
@@ -364,6 +405,134 @@ func (s *Server) acknowledgeMessageHandler(c *gin.Context) {
 	})
 }
 
+func (s *Server) requestReplyHandler(c *gin.Context) {
+	topicName := c.Param("topic")
+	topic, err := s.db.GetTopic(topicName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if topic == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Topic not found"})
+		return
+	}
+
+	var req RequestReplyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = 30
+	}
+	if timeout > 300 {
+		timeout = 300
+	}
+
+	// Generate correlation ID
+	correlationID := fmt.Sprintf("corr-%s", uuid.New().String()[:16])
+
+	// Add correlation_id to headers
+	if req.Headers == nil {
+		req.Headers = make(map[string]string)
+	}
+	req.Headers["correlation_id"] = correlationID
+
+	// Publish the request message
+	msg, err := s.db.PublishMessage(topic.ID, req.Payload, req.Headers)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Long-poll for reply
+	start := time.Now()
+	pollInterval := 200 * time.Millisecond
+
+	for {
+		reply, err := s.db.GetReply(correlationID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		if reply != nil {
+			// Clean up the reply
+			s.db.DeleteReply(correlationID)
+
+			c.JSON(http.StatusOK, gin.H{
+				"request_id":     msg.ID,
+				"correlation_id": correlationID,
+				"reply":          reply,
+			})
+			return
+		}
+
+		elapsed := time.Since(start).Seconds()
+		if elapsed >= timeout {
+			c.JSON(http.StatusGatewayTimeout, gin.H{
+				"error":          "request timed out waiting for reply",
+				"request_id":     msg.ID,
+				"correlation_id": correlationID,
+			})
+			return
+		}
+
+		time.Sleep(pollInterval)
+	}
+}
+
+func (s *Server) replyHandler(c *gin.Context) {
+	messageID := c.Param("message_id")
+
+	// Get original message to find correlation_id
+	msg, err := s.db.GetMessage(messageID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if msg == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "message not found"})
+		return
+	}
+
+	correlationID, ok := msg.Headers["correlation_id"]
+	if !ok || correlationID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "message has no correlation_id header"})
+		return
+	}
+
+	var req ReplyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Headers == nil {
+		req.Headers = make(map[string]string)
+	}
+	req.Headers["correlation_id"] = correlationID
+
+	// Store reply
+	if err := s.db.InsertReply(correlationID, req.Payload, req.Headers); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Optionally acknowledge the original message
+	if req.Group != "" {
+		s.db.AcknowledgeMessage(messageID, req.Group)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":         "reply sent",
+		"correlation_id": correlationID,
+		"message_id":     messageID,
+	})
+}
+
 func (s *Server) websocketHandler(c *gin.Context) {
 	// Upgrade to WebSocket
 	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -425,6 +594,153 @@ func (s *Server) websocketHandler(c *gin.Context) {
 
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// --- v2 Inbox Model Handlers ---
+
+func (s *Server) registerAgentHandler(c *gin.Context) {
+	var req RegisterAgentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	agent, err := s.db.RegisterAgent(req.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, agent)
+}
+
+func (s *Server) deleteAgentHandler(c *gin.Context) {
+	agentID := c.Param("agent_id")
+	if err := s.db.DeleteAgent(agentID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "deleted", "agent_id": agentID})
+}
+
+func (s *Server) sendInboxMessageHandler(c *gin.Context) {
+	agentID := c.Param("agent_id")
+
+	// Verify the target agent exists
+	agent, err := s.db.GetAgent(agentID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if agent == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+		return
+	}
+
+	var req SendInboxMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate message type
+	validTypes := map[string]bool{"request": true, "question": true, "answer": true, "done": true, "failed": true}
+	if !validTypes[req.Type] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "type must be one of: request, question, answer, done, failed"})
+		return
+	}
+
+	msg, err := s.db.SendInboxMessage(req.TaskID, req.From, agentID, req.Type, req.Content)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message_id": msg.ID,
+		"created_at": msg.CreatedAt,
+	})
+}
+
+func (s *Server) getInboxMessagesHandler(c *gin.Context) {
+	agentID := c.Param("agent_id")
+
+	// Verify the agent exists
+	agent, err := s.db.GetAgent(agentID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if agent == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+		return
+	}
+
+	status := c.Query("status")
+	taskID := c.Query("task_id")
+
+	// Support long-polling
+	timeout, _ := strconv.ParseFloat(c.DefaultQuery("timeout", "0"), 64)
+	if timeout > 30 {
+		timeout = 30
+	}
+
+	start := time.Now()
+	pollInterval := 500 * time.Millisecond
+
+	for {
+		messages, err := s.db.GetInboxMessages(agentID, status, taskID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		if len(messages) > 0 || timeout <= 0 {
+			if messages == nil {
+				messages = []InboxMessage{}
+			}
+			c.JSON(http.StatusOK, gin.H{"messages": messages})
+			return
+		}
+
+		elapsed := time.Since(start).Seconds()
+		if elapsed >= timeout {
+			c.JSON(http.StatusOK, gin.H{"messages": []InboxMessage{}})
+			return
+		}
+
+		time.Sleep(pollInterval)
+	}
+}
+
+func (s *Server) ackInboxMessageHandler(c *gin.Context) {
+	messageID := c.Param("message_id")
+
+	if err := s.db.AckInboxMessage(messageID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":     "acked",
+		"message_id": messageID,
+	})
+}
+
+func (s *Server) getTaskMessagesHandler(c *gin.Context) {
+	taskID := c.Param("task_id")
+
+	messages, err := s.db.GetTaskMessages(taskID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if messages == nil {
+		messages = []InboxMessage{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"messages": messages})
 }
 
 func generateConsumerID() string {

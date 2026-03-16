@@ -30,6 +30,24 @@ type Topic struct {
 	MessageCount  int       `json:"message_count"`
 }
 
+// Agent represents a registered agent (v2 inbox model)
+type Agent struct {
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// InboxMessage represents a message in an agent's inbox (v2)
+type InboxMessage struct {
+	ID        string                 `json:"id"`
+	TaskID    string                 `json:"task_id"`
+	From      string                 `json:"from"`
+	To        string                 `json:"to"`
+	Type      string                 `json:"type"`
+	Content   map[string]interface{} `json:"content"`
+	Status    string                 `json:"status"`
+	CreatedAt time.Time              `json:"created_at"`
+}
+
 // Database handles all SQLite operations
 type Database struct {
 	db *sql.DB
@@ -133,9 +151,37 @@ CREATE TABLE IF NOT EXISTS dlq (
     FOREIGN KEY (topic_id) REFERENCES topics(id)
 );
 
+CREATE TABLE IF NOT EXISTS replies (
+    correlation_id TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    headers TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_topic_offset ON messages(topic_id, offset);
 CREATE INDEX IF NOT EXISTS idx_leases_expires ON leases(expires_at);
 CREATE INDEX IF NOT EXISTS idx_leases_group ON leases(consumer_group);
+CREATE INDEX IF NOT EXISTS idx_replies_created ON replies(created_at);
+
+CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS inbox_messages (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    from_agent TEXT NOT NULL,
+    to_agent TEXT NOT NULL,
+    type TEXT NOT NULL,
+    content TEXT,
+    status TEXT NOT NULL DEFAULT 'unread',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_inbox_to_status ON inbox_messages(to_agent, status);
+CREATE INDEX IF NOT EXISTS idx_inbox_task ON inbox_messages(task_id);
+CREATE INDEX IF NOT EXISTS idx_inbox_to_task ON inbox_messages(to_agent, task_id);
 `
 	_, err := d.db.Exec(schema)
 	return err
@@ -338,6 +384,230 @@ func (d *Database) ClaimMessages(topicID int64, consumerGroup, consumerID string
 		return nil, err
 	}
 
+	return messages, nil
+}
+
+// Reply represents a reply to a request
+type Reply struct {
+	CorrelationID string                 `json:"correlation_id"`
+	Payload       map[string]interface{} `json:"payload"`
+	Headers       map[string]string      `json:"headers"`
+	CreatedAt     time.Time              `json:"created_at"`
+}
+
+// GetMessage retrieves a message by ID
+func (d *Database) GetMessage(messageID string) (*Message, error) {
+	row := d.db.QueryRow(`
+		SELECT id, topic_id, offset, payload, headers, timestamp, delivery_count
+		FROM messages WHERE id = ?
+	`, messageID)
+
+	var msg Message
+	var payloadStr, headersStr, timestampStr string
+	err := row.Scan(&msg.ID, &msg.TopicID, &msg.Offset, &payloadStr, &headersStr, &timestampStr, &msg.DeliveryCount)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	json.Unmarshal([]byte(payloadStr), &msg.Payload)
+	json.Unmarshal([]byte(headersStr), &msg.Headers)
+	msg.Timestamp, _ = time.Parse("2006-01-02 15:04:05", timestampStr)
+	return &msg, nil
+}
+
+// InsertReply stores a reply for a correlation ID
+func (d *Database) InsertReply(correlationID string, payload map[string]interface{}, headers map[string]string) error {
+	payloadJSON, _ := json.Marshal(payload)
+	headersJSON, _ := json.Marshal(headers)
+	_, err := d.db.Exec(
+		"INSERT OR REPLACE INTO replies (correlation_id, payload, headers) VALUES (?, ?, ?)",
+		correlationID, payloadJSON, headersJSON,
+	)
+	return err
+}
+
+// GetReply retrieves a reply by correlation ID
+func (d *Database) GetReply(correlationID string) (*Reply, error) {
+	row := d.db.QueryRow(
+		"SELECT correlation_id, payload, headers, created_at FROM replies WHERE correlation_id = ?",
+		correlationID,
+	)
+
+	var reply Reply
+	var payloadStr, headersStr, createdAtStr string
+	err := row.Scan(&reply.CorrelationID, &payloadStr, &headersStr, &createdAtStr)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	json.Unmarshal([]byte(payloadStr), &reply.Payload)
+	json.Unmarshal([]byte(headersStr), &reply.Headers)
+	reply.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)
+	return &reply, nil
+}
+
+// DeleteReply removes a reply by correlation ID
+func (d *Database) DeleteReply(correlationID string) error {
+	_, err := d.db.Exec("DELETE FROM replies WHERE correlation_id = ?", correlationID)
+	return err
+}
+
+// --- v2 Inbox Model Methods ---
+
+// RegisterAgent registers a new agent
+func (d *Database) RegisterAgent(id string) (*Agent, error) {
+	_, err := d.db.Exec(
+		"INSERT OR IGNORE INTO agents (id) VALUES (?)", id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return d.GetAgent(id)
+}
+
+// GetAgent gets an agent by ID
+func (d *Database) GetAgent(id string) (*Agent, error) {
+	row := d.db.QueryRow("SELECT id, created_at FROM agents WHERE id = ?", id)
+	var agent Agent
+	var createdAtStr string
+	err := row.Scan(&agent.ID, &createdAtStr)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	agent.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)
+	return &agent, nil
+}
+
+// DeleteAgent deletes an agent
+func (d *Database) DeleteAgent(id string) error {
+	result, err := d.db.Exec("DELETE FROM agents WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("agent not found")
+	}
+	return nil
+}
+
+// SendInboxMessage sends a message to an agent's inbox
+func (d *Database) SendInboxMessage(taskID, from, to, msgType string, content map[string]interface{}) (*InboxMessage, error) {
+	msgID := fmt.Sprintf("imsg-%s", uuid.New().String()[:16])
+	var contentJSON []byte
+	if content != nil {
+		contentJSON, _ = json.Marshal(content)
+	}
+
+	_, err := d.db.Exec(
+		"INSERT INTO inbox_messages (id, task_id, from_agent, to_agent, type, content) VALUES (?, ?, ?, ?, ?, ?)",
+		msgID, taskID, from, to, msgType, string(contentJSON),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &InboxMessage{
+		ID:        msgID,
+		TaskID:    taskID,
+		From:      from,
+		To:        to,
+		Type:      msgType,
+		Content:   content,
+		Status:    "unread",
+		CreatedAt: time.Now().UTC(),
+	}, nil
+}
+
+// GetInboxMessages retrieves messages from an agent's inbox
+func (d *Database) GetInboxMessages(agentID, status, taskID string) ([]InboxMessage, error) {
+	query := "SELECT id, task_id, from_agent, to_agent, type, content, status, created_at FROM inbox_messages WHERE to_agent = ?"
+	args := []interface{}{agentID}
+
+	if status != "" {
+		query += " AND status = ?"
+		args = append(args, status)
+	}
+	if taskID != "" {
+		query += " AND task_id = ?"
+		args = append(args, taskID)
+	}
+
+	query += " ORDER BY created_at ASC"
+
+	rows, err := d.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []InboxMessage
+	for rows.Next() {
+		var msg InboxMessage
+		var contentStr sql.NullString
+		var createdAtStr string
+		if err := rows.Scan(&msg.ID, &msg.TaskID, &msg.From, &msg.To, &msg.Type, &contentStr, &msg.Status, &createdAtStr); err != nil {
+			return nil, err
+		}
+		if contentStr.Valid && contentStr.String != "" {
+			json.Unmarshal([]byte(contentStr.String), &msg.Content)
+		}
+		msg.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)
+		messages = append(messages, msg)
+	}
+	return messages, nil
+}
+
+// AckInboxMessage marks an inbox message as acked
+func (d *Database) AckInboxMessage(messageID string) error {
+	result, err := d.db.Exec(
+		"UPDATE inbox_messages SET status = 'acked' WHERE id = ? AND status = 'unread'",
+		messageID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("message not found or already acked")
+	}
+	return nil
+}
+
+// GetTaskMessages retrieves all messages for a task (conversation history)
+func (d *Database) GetTaskMessages(taskID string) ([]InboxMessage, error) {
+	rows, err := d.db.Query(
+		"SELECT id, task_id, from_agent, to_agent, type, content, status, created_at FROM inbox_messages WHERE task_id = ? ORDER BY created_at ASC",
+		taskID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []InboxMessage
+	for rows.Next() {
+		var msg InboxMessage
+		var contentStr sql.NullString
+		var createdAtStr string
+		if err := rows.Scan(&msg.ID, &msg.TaskID, &msg.From, &msg.To, &msg.Type, &contentStr, &msg.Status, &createdAtStr); err != nil {
+			return nil, err
+		}
+		if contentStr.Valid && contentStr.String != "" {
+			json.Unmarshal([]byte(contentStr.String), &msg.Content)
+		}
+		msg.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAtStr)
+		messages = append(messages, msg)
+	}
 	return messages, nil
 }
 

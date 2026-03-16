@@ -1,6 +1,7 @@
 # Binaries
-stream0
-agentbus
+/stream0
+/agentbus
+stream0-linux-amd64
 
 # Database files
 *.db
@@ -14,3 +15,12 @@ agentbus
 
 # OS
 .DS_Store
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info
+.pytest_cache/
+dist/
+build/
