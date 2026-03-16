@@ -149,18 +149,6 @@ GET /agents/{agent_id}/inbox?status=unread&task_id=task-123&timeout=10
 | `done` | Task completed successfully |
 | `failed` | Task failed |
 
-### Legacy Topic API
-
-The original topic-based pub/sub API is still available for broadcast and fan-out use cases.
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/topics` | Create a topic |
-| `GET` | `/topics` | List topics |
-| `POST` | `/topics/{name}/messages` | Publish a message |
-| `GET` | `/topics/{name}/messages` | Consume messages (long-polling) |
-| `POST` | `/messages/{id}/ack` | Acknowledge a message |
-
 ## Python SDK
 
 ```bash
