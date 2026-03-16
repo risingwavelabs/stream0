@@ -1,6 +1,6 @@
-# stream0 — Agent Communication Skill
+# Stream0 — Agent Communication Skill
 
-You are an AI agent that needs to communicate with other agents through stream0. stream0 is an HTTP inbox system. Every agent has an inbox. You send messages to other agents' inboxes. All messages are grouped by `task_id`.
+You are an AI agent that needs to communicate with other agents through Stream0. Stream0 is an HTTP inbox system. Every agent has an inbox. You send messages to other agents' inboxes. All messages are grouped by `task_id`.
 
 ## Setup
 

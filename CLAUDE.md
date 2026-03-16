@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-This file is for Claude Code (or any AI agent) working on stream0. Read this first.
+This file is for Claude Code (or any AI agent) working on Stream0. Read this first.
 
-## What is stream0?
+## What is Stream0?
 
 An agent communication layer. Every agent gets an inbox. Agents send messages to each other's inboxes, grouped by `task_id`. Supports multi-turn conversations (request → question → answer → done).
 

@@ -1,4 +1,4 @@
-# stream0
+# Stream0
 
 The communication layer for AI agents. Every agent gets an inbox. Messages are point-to-point, grouped by task. Agents can have multi-turn conversations mid-task.
 
@@ -12,7 +12,7 @@ You have two agents on different machines. Agent A needs Agent B to do work. Hal
 - **Kafka/SQS** — designed for microservices, not agent conversations
 - **Framework built-in** — only works inside one process
 
-stream0 solves this: send a message to an agent's inbox, it persists until read, agents can go back and forth, every message is tagged with a `task_id` so the main agent always knows which conversation a response belongs to.
+Stream0 solves this: send a message to an agent's inbox, it persists until read, agents can go back and forth, every message is tagged with a `task_id` so the main agent always knows which conversation a response belongs to.
 
 ## Quick Start
 
@@ -254,7 +254,7 @@ STREAM0_URL=http://localhost:8080 pytest tests/test_integration.py -v
 ## Architecture
 
 ```
-Agent A                    stream0                   Agent B
+Agent A                    Stream0                   Agent B
 (main)                     (Go + SQLite)             (translator)
   │                            │                         │
   ├── POST /agents/B/inbox ──→ │ (persists message)      │
@@ -282,7 +282,7 @@ Every message carries the same `task_id`. The main agent always knows which conv
 - **HTTP-native.** No SDK required. curl works. Any language, any framework.
 - **task_id is the conversation.** Like an email subject line — groups related messages.
 - **Polling is fine.** Agents think for 30+ seconds. A few seconds of message latency is irrelevant.
-- **Idempotency is the caller's responsibility.** stream0 persists messages and delivers at-least-once. If your agent crashes and restarts, it will re-process unacked messages. Design accordingly.
+- **Idempotency is the caller's responsibility.** Stream0 persists messages and delivers at-least-once. If your agent crashes and restarts, it will re-process unacked messages. Design accordingly.
 
 ## License
 

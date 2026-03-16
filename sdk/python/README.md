@@ -1,6 +1,6 @@
-# stream0 Python SDK
+# Stream0 Python SDK
 
-Python client for [stream0](https://github.com/risingwavelabs/stream0) — the communication layer for AI agents.
+Python client for [Stream0](https://github.com/risingwavelabs/stream0) — the communication layer for AI agents.
 
 ## Install
 
