@@ -1,34 +1,21 @@
-# Self-Hosting Guide for stream0
-
-This guide covers how to deploy and operate stream0 in production environments.
+# Self-Hosting Guide
 
 ## Quick Start
 
-### Binary Installation
-
 ```bash
-# Download the latest release
-curl -L https://github.com/risingwavelabs/stream0/releases/latest/download/stream0 -o stream0
-chmod +x stream0
+# Build
+go build -o stream0 .
 
-# Run with default config
+# Run with defaults (localhost:8080, SQLite in current dir)
 ./stream0
 
-# Or with custom config
+# Run with config
 ./stream0 -config stream0.yaml
 ```
 
-### Environment Variables
+## Configuration
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `STREAM0_SERVER_HOST` | Bind address | `127.0.0.1` |
-| `STREAM0_SERVER_PORT` | Port | `8080` |
-| `STREAM0_DB_PATH` | Database file path | `./stream0.db` |
-| `STREAM0_LOG_LEVEL` | Log level | `info` |
-| `STREAM0_LOG_FORMAT` | Log format (json/text) | `json` |
-
-### Configuration File
+### Config file
 
 Create `stream0.yaml`:
 
@@ -43,15 +30,66 @@ database:
 log:
   level: info
   format: json
+
+auth:
+  api_keys:
+    - your-secret-key-here
 ```
 
-## Production Deployment
+### Environment variables
 
-### Systemd Service
+Override any config value:
 
-Create `/etc/systemd/system/stream0.service`:
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `STREAM0_SERVER_HOST` | Bind address | `127.0.0.1` |
+| `STREAM0_SERVER_PORT` | Port | `8080` |
+| `STREAM0_DB_PATH` | Database path | `./stream0.db` |
+| `STREAM0_LOG_LEVEL` | Log level | `info` |
+| `STREAM0_LOG_FORMAT` | `json` or `text` | `json` |
+| `STREAM0_API_KEY` | Add an API key | (none) |
 
-```ini
+## Production Deployment (systemd)
+
+### 1. Create user and directories
+
+```bash
+sudo useradd -r -s /bin/false stream0
+sudo mkdir -p /etc/stream0 /var/lib/stream0
+sudo chown stream0:stream0 /var/lib/stream0
+```
+
+### 2. Install binary
+
+```bash
+# Build on the target machine (CGO required for SQLite)
+CGO_ENABLED=1 go build -o stream0 .
+sudo cp stream0 /usr/local/bin/
+```
+
+### 3. Add config
+
+```bash
+sudo tee /etc/stream0/stream0.yaml << 'EOF'
+server:
+  host: 0.0.0.0
+  port: 8080
+database:
+  path: /var/lib/stream0/stream0.db
+log:
+  level: info
+  format: json
+auth:
+  api_keys:
+    - GENERATE_A_RANDOM_KEY_HERE
+EOF
+sudo chmod 600 /etc/stream0/stream0.yaml
+```
+
+### 4. Create systemd service
+
+```bash
+sudo tee /etc/systemd/system/stream0.service << 'EOF'
 [Unit]
 Description=stream0 message bus
 After=network.target
@@ -66,121 +104,47 @@ RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
+EOF
 ```
 
-### Docker
-
-```dockerfile
-FROM alpine:latest
-RUN apk add --no-cache ca-certificates
-COPY stream0 /usr/local/bin/
-EXPOSE 8080
-CMD ["stream0"]
-```
-
-### Nginx Reverse Proxy
-
-```nginx
-upstream stream0 {
-    server 127.0.0.1:8080;
-}
-
-server {
-    listen 80;
-    server_name stream0.example.com;
-
-    location / {
-        proxy_pass http://stream0;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-```
-
-## Backup and Recovery
-
-### Backup
-
-stream0 uses SQLite, so backup is simple:
+### 5. Start
 
 ```bash
-# While running (WAL mode allows this)
-cp stream0.db stream0.db.backup
-
-# Or use SQLite's online backup
-sqlite3 stream0.db ".backup '/backup/stream0.db'"
+sudo systemctl daemon-reload
+sudo systemctl enable stream0
+sudo systemctl start stream0
 ```
 
-### Recovery
+### 6. Verify
 
 ```bash
-# Stop stream0
-systemctl stop stream0
+curl http://localhost:8080/health
+# {"status":"healthy","version":"0.1.0-go"}
+```
 
-# Restore backup
-cp stream0.db.backup stream0.db
+## Authentication
 
-# Start stream0
-systemctl start stream0
+When `api_keys` is set in config, all endpoints except `/health` require:
+
+```bash
+curl -H "X-API-Key: your-secret-key" http://localhost:8080/agents
+```
+
+## Backup
+
+SQLite WAL mode allows live backups:
+
+```bash
+sqlite3 /var/lib/stream0/stream0.db ".backup /backup/stream0.db"
 ```
 
 ## Monitoring
 
-### Health Check
+- Health: `GET /health`
+- Logs: `journalctl -u stream0 -f`
 
-```bash
-curl http://localhost:8080/health
-```
+## Important notes
 
-### Logging
-
-stream0 outputs structured JSON logs:
-
-```json
-{
-  "client_ip": "127.0.0.1",
-  "timestamp": "2026-03-13T00:00:00Z",
-  "method": "POST",
-  "path": "/topics/tasks/messages",
-  "status": 201,
-  "latency": 1500000,
-  "user_agent": "curl/7.64.1"
-}
-```
-
-### Metrics (Future)
-
-Metrics endpoint at `/metrics` (Prometheus format) is planned for v0.2.
-
-## Troubleshooting
-
-### Database locked
-
-SQLite can show "database is locked" under high concurrency. stream0 uses WAL mode which handles most cases. If issues persist:
-
-1. Increase SQLite busy timeout
-2. Consider using PostgreSQL backend (future feature)
-
-### High memory usage
-
-SQLite caches can grow. Restart stream0 periodically or set:
-
-```sql
-PRAGMA cache_size = -64000;  -- 64MB cache limit
-```
-
-## Security
-
-- **No authentication built-in** (planned for v0.2)
-- Run behind reverse proxy for HTTPS
-- Use firewall rules to limit access
-- Consider VPN for agent communication
-
-## Scaling
-
-stream0 is single-node. For higher throughput:
-
-1. **Vertical scaling**: More CPU/RAM on single node
-2. **Sharding**: Run multiple stream0 instances, route by topic prefix
-3. **External backend**: Use PostgreSQL instead of SQLite (v0.2)
+- **CGO required**: `mattn/go-sqlite3` needs a C compiler. Install `gcc` on the server.
+- **Do not cross-compile**: Build on the target architecture. `GOOS=linux CGO_ENABLED=0` produces a binary that crashes.
+- **Swap for small instances**: EC2 t3.micro needs 2GB swap for Go builds: `sudo fallocate -l 2G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile`
