@@ -4,13 +4,13 @@
 
 ```bash
 # Build
-go build -o stream0 .
+cargo build --release
 
 # Run with defaults (localhost:8080, SQLite in current dir)
-./stream0
+./target/release/stream0
 
 # Run with config
-./stream0 -config stream0.yaml
+./target/release/stream0 --config stream0.yaml
 ```
 
 ## Configuration
@@ -62,9 +62,9 @@ sudo chown stream0:stream0 /var/lib/stream0
 ### 2. Install binary
 
 ```bash
-# Build on the target machine (CGO required for SQLite)
-CGO_ENABLED=1 go build -o stream0 .
-sudo cp stream0 /usr/local/bin/
+# Build on the target machine (or cross-compile)
+cargo build --release
+sudo cp target/release/stream0 /usr/local/bin/
 ```
 
 ### 3. Add config
@@ -145,6 +145,6 @@ sqlite3 /var/lib/stream0/stream0.db ".backup /backup/stream0.db"
 
 ## Important notes
 
-- **CGO required**: `mattn/go-sqlite3` needs a C compiler. Install `gcc` on the server.
-- **Do not cross-compile**: Build on the target architecture. `GOOS=linux CGO_ENABLED=0` produces a binary that crashes.
-- **Swap for small instances**: EC2 t3.micro needs 2GB swap for Go builds: `sudo fallocate -l 2G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile`
+- **Rust required**: Install with `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+- **SQLite bundled**: The `rusqlite` crate compiles SQLite from source. No system SQLite dependency needed.
+- **Swap for small instances**: EC2 t3.micro may need 2GB swap for builds: `sudo fallocate -l 2G /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile`

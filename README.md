@@ -18,8 +18,8 @@ Stream0 solves this: send a message to an agent's inbox, it persists until read,
 
 ```bash
 # Build and run
-go build -o stream0 .
-./stream0
+cargo build --release
+./target/release/stream0
 
 # Server runs on http://127.0.0.1:8080
 ```
@@ -229,9 +229,6 @@ curl -H "X-API-Key: your-secret-key" http://localhost:8080/agents/my-agent/inbox
 ## Testing
 
 ```bash
-# Go tests (87 tests)
-go test -v ./...
-
 # Python SDK unit tests (47 tests)
 cd sdk/python && pip install -e ".[dev]" && pytest tests/test_client.py -v
 
@@ -243,7 +240,7 @@ STREAM0_URL=http://localhost:8080 pytest tests/test_integration.py -v
 
 ```
 Agent A                    Stream0                   Agent B
-(main)                     (Go + SQLite)             (translator)
+(main)                     (Rust + SQLite)             (translator)
   │                            │                         │
   ├── POST /agents/B/inbox ──→ │ (persists message)      │
   │   type: request            │                         │

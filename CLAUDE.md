@@ -9,36 +9,31 @@ An agent communication layer. Every agent gets an inbox. Agents send messages to
 ## Project structure
 
 ```
-├── main.go           # Entry point, graceful shutdown
-├── server.go         # HTTP handlers (inbox + topic)
-├── database.go       # SQLite operations, schema
-├── config.go         # YAML config + env var loading
-├── server_test.go    # HTTP endpoint tests
-├── database_test.go  # Database layer tests
-├── go.mod / go.sum   # Go dependencies
+├── Cargo.toml        # Rust dependencies
+├── src/
+│   ├── main.rs       # Entry point, HTTP handlers, auth middleware
+│   ├── db.rs         # SQLite operations, schema, models
+│   └── config.rs     # YAML config + env var loading
 ├── sdk/python/       # Python SDK
 │   ├── stream0/      # Package (client.py, exceptions.py)
 │   └── tests/        # Unit + integration tests
-└── docs/             # PRD, architecture docs
+└── docs/             # PRD
 ```
 
 ## Build and test
 
 ```bash
 # Build
-go build -o stream0 .
+cargo build --release
 
 # Run
-./stream0                          # default config
-./stream0 -config stream0.yaml    # custom config
+./target/release/stream0                              # default config
+./target/release/stream0 --config stream0.yaml        # custom config
 
-# Test (Go)
-go test -v ./...
-
-# Test (Python SDK)
+# Test (Python SDK unit tests — 47 tests)
 cd sdk/python && pip install -e ".[dev]" && pytest tests/test_client.py -v
 
-# Integration tests (needs running server)
+# Integration tests (needs running server — 25 tests)
 STREAM0_URL=http://localhost:8080 pytest tests/test_integration.py -v
 ```
 
@@ -63,15 +58,16 @@ Message types: `request`, `question`, `answer`, `done`, `failed`
 
 ## Important technical details
 
-- **SQLite library**: Use `github.com/mattn/go-sqlite3` (CGO). Do NOT use `modernc.org/sqlite` — it crashes with OOM on EC2 t3.micro.
-- **Config loading**: No envconfig library. Manual `os.Getenv()` only overrides when set. See config.go.
-- **Auth**: API key via `X-API-Key` header. Keys in YAML config under `auth.api_keys`. Constant-time comparison.
-- **CGO required**: `mattn/go-sqlite3` requires CGO. Cannot cross-compile from macOS to Linux. Build on the target machine.
+- **Language**: Rust (axum + rusqlite + serde + tokio)
+- **SQLite**: Uses `rusqlite` with `bundled` feature (compiles SQLite from source, no system dependency)
+- **Config loading**: YAML parsed with serde_yaml. Env vars override only when set.
+- **Auth**: API key via `X-API-Key` header. Keys in YAML config under `auth.api_keys`. Constant-time comparison (`subtle` crate).
 - **Long-polling**: Both topic consume and inbox endpoints support long-polling with `timeout` param.
+- **Timestamps**: Stored as ISO 8601 strings in SQLite, parsed with chrono. Fixed the epoch-zero bug from the Go version.
 
 ## Deployment
 
-- **EC2**: Build on instance with `CGO_ENABLED=1 go build -o stream0 .`, systemd service at `/etc/systemd/system/stream0.service`
+- **EC2**: Build on instance with `cargo build --release`, systemd service at `/etc/systemd/system/stream0.service`
 - **Config**: `/etc/stream0/stream0.yaml`
 - **Data**: `/var/lib/stream0/stream0.db`
 - **API keys**: Only in config file on server, never in code or chat
@@ -80,33 +76,31 @@ Message types: `request`, `question`, `answer`, `done`, `failed`
 
 ### Add a new inbox endpoint
 
-1. Add handler in `server.go` (pattern: `func (s *Server) myHandler(c *gin.Context)`)
-2. Register route in `setupRoutes()` under the inbox section
-3. Add database method in `database.go` if needed
-4. Add tests in both `server_test.go` and `database_test.go`
-5. Update Python SDK in `sdk/python/stream0/client.py`
-6. Add Python tests in `sdk/python/tests/test_client.py`
+1. Add handler function in `src/main.rs`
+2. Register route in the `Router` setup in `main()`
+3. Add database method in `src/db.rs` if needed
+4. Update Python SDK in `sdk/python/stream0/client.py`
+5. Add Python tests in `sdk/python/tests/test_client.py`
 
 ### Deploy an update
 
 ```bash
 # Upload source to EC2
-scp *.go go.mod go.sum ubuntu@<IP>:/tmp/stream0-build/
+scp Cargo.toml ubuntu@<IP>:/tmp/stream0-rust/
+scp src/*.rs ubuntu@<IP>:/tmp/stream0-rust/src/
 
 # SSH in and build
 ssh ubuntu@<IP>
-export PATH=/usr/local/go/bin:$PATH
-cd /tmp/stream0-build && CGO_ENABLED=1 go build -o stream0 .
+source ~/.cargo/env
+cd /tmp/stream0-rust && cargo build --release
 
 # Deploy
 sudo systemctl stop stream0
-sudo cp stream0 /usr/local/bin/stream0
+sudo cp target/release/stream0 /usr/local/bin/stream0
 sudo systemctl start stream0
 ```
 
 ## Do not
 
-- Do not use `modernc.org/sqlite` — it fails on EC2
-- Do not use `kelseyhightower/envconfig` — it overwrites YAML values with defaults
 - Do not commit API keys or secrets
-- Do not cross-compile with `CGO_ENABLED=0` — the binary will crash at runtime
+- Do not use Go — the project has been rewritten in Rust
