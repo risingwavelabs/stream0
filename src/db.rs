@@ -470,6 +470,23 @@ impl Database {
 
     // --- Agents (Inbox Model) ---
 
+    pub fn list_agents(&self) -> Result<Vec<Agent>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, created_at FROM agents ORDER BY created_at ASC",
+        )?;
+        let agents = stmt
+            .query_map([], |row| {
+                let ts: String = row.get(1)?;
+                Ok(Agent {
+                    id: row.get(0)?,
+                    created_at: Database::parse_ts(&ts),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(agents)
+    }
+
     pub fn register_agent(&self, id: &str) -> Result<Agent> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

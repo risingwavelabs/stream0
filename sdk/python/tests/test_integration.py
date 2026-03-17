@@ -381,6 +381,33 @@ def worker_agent():
     a.close()
 
 
+def test_list_agents_integration(client):
+    # Register a few agents with unique names
+    a1 = unique_name("agent")
+    a2 = unique_name("agent")
+    client.register_agent(a1)
+    client.register_agent(a2)
+
+    agents = client.list_agents()
+    agent_ids = [a["id"] for a in agents]
+    assert a1 in agent_ids
+    assert a2 in agent_ids
+
+
+def test_list_agents_after_delete(client):
+    agent_id = unique_name("agent")
+    client.register_agent(agent_id)
+
+    # Verify it's in the list
+    agents = client.list_agents()
+    assert agent_id in [a["id"] for a in agents]
+
+    # Delete and verify it's gone
+    client.delete_agent(agent_id)
+    agents = client.list_agents()
+    assert agent_id not in [a["id"] for a in agents]
+
+
 def test_register_agent_integration(client):
     agent_id = unique_name("agent")
     result = client.register_agent(agent_id)

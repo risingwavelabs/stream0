@@ -381,6 +381,15 @@ async fn reply_handler(
 
 // --- Handlers: Inbox ---
 
+async fn list_agents_handler(
+    State(state): State<SharedState>,
+) -> impl IntoResponse {
+    match state.db.list_agents() {
+        Ok(agents) => (StatusCode::OK, Json(serde_json::json!({"agents": agents}))).into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
 async fn register_agent_handler(
     State(state): State<SharedState>,
     Json(req): Json<RegisterAgentRequest>,
@@ -559,7 +568,7 @@ async fn main() {
         .route("/topics/{topic}/request", post(request_reply_handler))
         .route("/messages/{message_id}/reply", post(reply_handler))
         // Inbox
-        .route("/agents", post(register_agent_handler))
+        .route("/agents", get(list_agents_handler).post(register_agent_handler))
         .route("/agents/{agent_id}", delete(delete_agent_handler))
         .route("/agents/{agent_id}/inbox", get(get_inbox_messages_handler).post(send_inbox_message_handler))
         .route("/inbox/messages/{message_id}/ack", post(ack_inbox_message_handler))

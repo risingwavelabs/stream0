@@ -221,6 +221,19 @@ class Stream0Client:
 
     # --- v2 Inbox Model ---
 
+    def list_agents(self):
+        """List all registered agents.
+
+        Returns:
+            List of agent dicts with id and created_at.
+        """
+        resp = self._session.get(
+            self._url("/agents"),
+            timeout=self.timeout,
+        )
+        result = self._handle_response(resp)
+        return result.get("agents", [])
+
     def register_agent(self, agent_id):
         """Register an agent. Creates its inbox. Idempotent.
 

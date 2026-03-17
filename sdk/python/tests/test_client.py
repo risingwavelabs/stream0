@@ -450,6 +450,37 @@ from stream0 import Agent
 
 
 @responses.activate
+def test_list_agents(client):
+    responses.add(
+        responses.GET,
+        f"{BASE_URL}/agents",
+        json={
+            "agents": [
+                {"id": "agent-1", "created_at": "2024-01-01T00:00:00Z"},
+                {"id": "agent-2", "created_at": "2024-01-02T00:00:00Z"},
+            ]
+        },
+        status=200,
+    )
+    agents = client.list_agents()
+    assert len(agents) == 2
+    assert agents[0]["id"] == "agent-1"
+    assert agents[1]["id"] == "agent-2"
+
+
+@responses.activate
+def test_list_agents_empty(client):
+    responses.add(
+        responses.GET,
+        f"{BASE_URL}/agents",
+        json={"agents": []},
+        status=200,
+    )
+    agents = client.list_agents()
+    assert agents == []
+
+
+@responses.activate
 def test_register_agent(client):
     responses.add(
         responses.POST,
