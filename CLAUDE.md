@@ -100,6 +100,18 @@ sudo cp target/release/stream0 /usr/local/bin/stream0
 sudo systemctl start stream0
 ```
 
+## Documentation rule
+
+Every time you make major changes, develop new features, or do major refactors, you **must** update the relevant docs and push them to the GitHub repo in the same commit or immediately after. This includes:
+
+- **README.md** — if the API surface changes or new features are added
+- **CLAUDE.md** — if build steps, project structure, or technical details change
+- **STREAM0_SKILL.md** — if endpoints or usage patterns change (this is what other agents read)
+- **sdk/python/README.md** — if the Python SDK changes
+- **SELF_HOSTING.md** — if deployment steps change
+
+Do not ship code without shipping docs.
+
 ## Do not
 
 - Do not commit API keys or secrets
