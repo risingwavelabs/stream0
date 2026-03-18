@@ -234,19 +234,22 @@ class Stream0Client:
         result = self._handle_response(resp)
         return result.get("agents", [])
 
-    def register_agent(self, agent_id, aliases=None):
+    def register_agent(self, agent_id, aliases=None, webhook=None):
         """Register an agent. Creates its inbox. Idempotent.
 
         Args:
             agent_id: Unique agent identifier.
             aliases: Optional list of alternative names for this agent.
+            webhook: Optional URL. Stream0 will POST to this URL when a message arrives.
 
         Returns:
-            Dict with id, aliases, created_at, and last_seen.
+            Dict with id, aliases, created_at, last_seen, and webhook.
         """
         body = {"id": agent_id}
         if aliases:
             body["aliases"] = aliases
+        if webhook:
+            body["webhook"] = webhook
         resp = self._session.post(
             self._url("/agents"),
             json=body,
@@ -375,14 +378,15 @@ class Agent:
         agent.ack(messages[0]["id"])
     """
 
-    def __init__(self, agent_id, url="http://localhost:8080", api_key=None, timeout=30, aliases=None):
+    def __init__(self, agent_id, url="http://localhost:8080", api_key=None, timeout=30, aliases=None, webhook=None):
         self.agent_id = agent_id
         self.aliases = aliases
+        self.webhook = webhook
         self.client = Stream0Client(url, api_key=api_key, timeout=timeout)
 
     def register(self):
         """Register this agent with stream0."""
-        return self.client.register_agent(self.agent_id, aliases=self.aliases)
+        return self.client.register_agent(self.agent_id, aliases=self.aliases, webhook=self.webhook)
 
     def send(self, to, task_id, msg_type, content=None):
         """Send a message to another agent's inbox."""

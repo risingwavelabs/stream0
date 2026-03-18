@@ -66,6 +66,7 @@ Message types: `request`, `question`, `answer`, `done`, `failed`
 - **Timestamps**: Stored as ISO 8601 strings in SQLite, parsed with chrono. Fixed the epoch-zero bug from the Go version.
 - **Agent aliases**: The `agent_aliases` table maps alternate names to canonical agent IDs. Messages sent to an alias are delivered to the canonical inbox.
 - **Presence**: `last_seen` is updated on the agents row each time an agent polls their inbox.
+- **Webhooks**: Agents can register a `webhook` URL at registration time. On message delivery, Stream0 fires an async HTTP POST notification to the URL using reqwest with a 10-second timeout. Fire-and-forget — failures don't affect message storage.
 
 ## Deployment
 

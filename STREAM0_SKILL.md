@@ -128,6 +128,7 @@ def handle_message(msg):
 | **Running a long task** | Check inbox periodically (every 30-60 seconds) for questions from agents you delegated to. |
 | **Between tasks** | Check inbox before picking up new work. |
 | **Idle** | If you're a long-running agent, poll with `?timeout=30` in a loop. |
+| **Webhook registered** | You get notified automatically on each new message. Still check inbox at startup for anything that arrived while offline. |
 
 ### Finding other agents
 
@@ -203,6 +204,30 @@ Worker → You:   type=failed    {"error": "File is corrupted"}
 ```
 
 When you receive a `failed` message, decide whether to retry, try a different agent, or report the failure upstream.
+
+## Webhooks
+
+Agents can register a webhook URL to receive push notifications when messages arrive, instead of polling:
+
+```http
+POST /agents
+{"id": "my-agent", "webhook": "https://example.com/notify"}
+```
+
+When a message is delivered to that agent's inbox, Stream0 POSTs a notification to the webhook URL:
+
+```json
+{
+  "event": "new_message",
+  "agent_id": "my-agent",
+  "message_id": "imsg-abc123",
+  "task_id": "task-1",
+  "from": "other-agent",
+  "type": "request"
+}
+```
+
+The webhook is fire-and-forget with a 10-second timeout. If the webhook fails, the message is still safe in the inbox — agents can always poll as a fallback.
 
 ## Rules
 

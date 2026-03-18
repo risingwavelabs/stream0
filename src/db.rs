@@ -41,6 +41,8 @@ pub struct Agent {
     pub created_at: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_seen: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhook: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,7 +147,8 @@ impl Database {
             CREATE TABLE IF NOT EXISTS agents (
                 id TEXT PRIMARY KEY,
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-                last_seen TEXT
+                last_seen TEXT,
+                webhook TEXT
             );
 
             CREATE TABLE IF NOT EXISTS agent_aliases (
@@ -485,43 +488,53 @@ impl Database {
     pub fn list_agents(&self) -> Result<Vec<Agent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, created_at, last_seen FROM agents ORDER BY created_at ASC",
+            "SELECT id, created_at, last_seen, webhook FROM agents ORDER BY created_at ASC",
         )?;
         let agents: Vec<Agent> = stmt
             .query_map([], |row| {
                 let ts: String = row.get(1)?;
                 let ls: Option<String> = row.get(2)?;
+                let wh: Option<String> = row.get(3)?;
                 Ok((
                     row.get::<_, String>(0)?,
                     ts,
                     ls,
+                    wh,
                 ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?
             .into_iter()
-            .map(|(id, ts, ls)| {
+            .map(|(id, ts, ls, wh)| {
                 let aliases = self.get_aliases_inner(&conn, &id);
                 Agent {
                     id,
                     aliases,
                     created_at: Database::parse_ts(&ts),
                     last_seen: ls.map(|s| Database::parse_ts(&s)),
+                    webhook: wh,
                 }
             })
             .collect();
         Ok(agents)
     }
 
-    pub fn register_agent(&self, id: &str, aliases: Option<&[String]>) -> Result<Agent> {
+    pub fn register_agent(&self, id: &str, aliases: Option<&[String]>, webhook: Option<&str>) -> Result<Agent> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR IGNORE INTO agents (id) VALUES (?1)",
             params![id],
         )?;
 
+        // Update webhook if provided
+        if let Some(wh) = webhook {
+            conn.execute(
+                "UPDATE agents SET webhook = ?1 WHERE id = ?2",
+                params![wh, id],
+            )?;
+        }
+
         // Update aliases if provided
         if let Some(alias_list) = aliases {
-            // Remove old aliases for this agent
             conn.execute("DELETE FROM agent_aliases WHERE agent_id = ?1", params![id])?;
             for alias in alias_list {
                 conn.execute(
@@ -531,10 +544,10 @@ impl Database {
             }
         }
 
-        let (ts, ls): (String, Option<String>) = conn.query_row(
-            "SELECT created_at, last_seen FROM agents WHERE id = ?1",
+        let (ts, ls, wh): (String, Option<String>, Option<String>) = conn.query_row(
+            "SELECT created_at, last_seen, webhook FROM agents WHERE id = ?1",
             params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
 
         let agent_aliases = self.get_aliases_inner(&conn, id);
@@ -544,6 +557,7 @@ impl Database {
             aliases: agent_aliases,
             created_at: Database::parse_ts(&ts),
             last_seen: ls.map(|s| Database::parse_ts(&s)),
+            webhook: wh,
         })
     }
 
@@ -586,25 +600,39 @@ impl Database {
     pub fn get_agent(&self, id: &str) -> Result<Option<Agent>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, created_at, last_seen FROM agents WHERE id = ?1",
+            "SELECT id, created_at, last_seen, webhook FROM agents WHERE id = ?1",
             params![id],
             |row| {
                 let ts: String = row.get(1)?;
                 let ls: Option<String> = row.get(2)?;
-                Ok((row.get::<_, String>(0)?, ts, ls))
+                let wh: Option<String> = row.get(3)?;
+                Ok((row.get::<_, String>(0)?, ts, ls, wh))
             },
         )
         .optional()?
-        .map(|(id, ts, ls)| {
+        .map(|(id, ts, ls, wh)| {
             let aliases = self.get_aliases_inner(&conn, &id);
             Ok(Agent {
                 id,
                 aliases,
                 created_at: Database::parse_ts(&ts),
                 last_seen: ls.map(|s| Database::parse_ts(&s)),
+                webhook: wh,
             })
         })
         .transpose()
+    }
+
+    pub fn get_agent_webhook(&self, agent_id: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT webhook FROM agents WHERE id = ?1",
+            params![agent_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map(|o| o.flatten())
+        .map_err(Into::into)
     }
 
     pub fn update_last_seen(&self, agent_id: &str) -> Result<()> {

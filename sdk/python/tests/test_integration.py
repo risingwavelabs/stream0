@@ -683,6 +683,63 @@ def test_agent_last_seen(client):
     assert agent.get("last_seen") is not None
 
 
+def test_webhook_stored_on_registration(client):
+    """Webhook URL is stored and returned in agent list."""
+    agent_id = unique_name("agent")
+    result = client.register_agent(agent_id, webhook="https://example.com/notify")
+    assert result.get("webhook") == "https://example.com/notify"
+
+    agents = client.list_agents()
+    agent = next(a for a in agents if a["id"] == agent_id)
+    assert agent.get("webhook") == "https://example.com/notify"
+
+
+def test_webhook_called_on_message(client):
+    """Stream0 POSTs to the webhook URL when a message is sent to the agent."""
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import json
+
+    received = []
+
+    class WebhookHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length))
+            received.append(body)
+            self.send_response(200)
+            self.end_headers()
+        def log_message(self, *args):
+            pass  # suppress logs
+
+    # Start a local webhook server
+    server = HTTPServer(("127.0.0.1", 0), WebhookHandler)
+    port = server.server_address[1]
+    webhook_url = f"http://127.0.0.1:{port}/webhook"
+
+    server_thread = threading.Thread(target=server.handle_request)
+    server_thread.start()
+
+    # Register agent with webhook
+    agent_id = unique_name("agent")
+    sender_id = unique_name("sender")
+    client.register_agent(agent_id, webhook=webhook_url)
+    client.register_agent(sender_id)
+
+    # Send a message — should trigger webhook
+    client.send(agent_id, "task-wh", sender_id, "request", {"data": "hello"})
+
+    # Wait for webhook to be received
+    server_thread.join(timeout=5)
+    server.server_close()
+
+    assert len(received) == 1
+    assert received[0]["event"] == "new_message"
+    assert received[0]["agent_id"] == agent_id
+    assert received[0]["task_id"] == "task-wh"
+    assert received[0]["from"] == sender_id
+    assert received[0]["type"] == "request"
+
+
 def test_failed_task(main_agent, worker_agent):
     """Worker reports task failure."""
     task_id = unique_name("task")

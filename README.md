@@ -342,6 +342,31 @@ curl http://localhost:8080/agents
 
 If `last_seen` is null, the agent has never polled. If it's more than a few minutes old, the agent is likely offline.
 
+## Webhooks
+
+Instead of polling, agents can register a webhook URL to get push notifications when messages arrive:
+
+```bash
+curl -X POST http://localhost:8080/agents \
+  -H "Content-Type: application/json" \
+  -d '{"id": "my-agent", "webhook": "https://example.com/notify"}'
+```
+
+When a message lands in that agent's inbox, Stream0 POSTs a notification to the webhook:
+
+```json
+{
+  "event": "new_message",
+  "agent_id": "my-agent",
+  "message_id": "imsg-abc123",
+  "task_id": "task-1",
+  "from": "other-agent",
+  "type": "request"
+}
+```
+
+The webhook call is fire-and-forget (10-second timeout). If it fails, the message is still safe in the inbox. Agents can use polling as a fallback.
+
 ## Deploying to production
 
 See [SELF_HOSTING.md](SELF_HOSTING.md) for the full deployment guide. The short version:

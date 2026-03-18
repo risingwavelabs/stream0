@@ -104,6 +104,8 @@ struct RegisterAgentRequest {
     id: String,
     #[serde(default)]
     aliases: Option<Vec<String>>,
+    #[serde(default)]
+    webhook: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -396,7 +398,7 @@ async fn register_agent_handler(
     State(state): State<SharedState>,
     Json(req): Json<RegisterAgentRequest>,
 ) -> impl IntoResponse {
-    match state.db.register_agent(&req.id, req.aliases.as_deref()) {
+    match state.db.register_agent(&req.id, req.aliases.as_deref(), req.webhook.as_deref()) {
         Ok(agent) => (StatusCode::CREATED, Json(serde_json::to_value(agent).unwrap())).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -444,14 +446,35 @@ async fn send_inbox_message_handler(
         &req.msg_type,
         req.content.as_ref(),
     ) {
-        Ok(msg) => (
-            StatusCode::CREATED,
-            Json(serde_json::json!({
-                "message_id": msg.id,
-                "created_at": msg.created_at,
-            })),
-        )
-            .into_response(),
+        Ok(msg) => {
+            // Fire webhook notification in the background (fire-and-forget)
+            if let Ok(Some(webhook_url)) = state.db.get_agent_webhook(&resolved_id) {
+                let payload = serde_json::json!({
+                    "event": "new_message",
+                    "agent_id": resolved_id,
+                    "message_id": msg.id,
+                    "task_id": req.task_id,
+                    "from": req.from,
+                    "type": req.msg_type,
+                });
+                tokio::spawn(async move {
+                    let client = reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(10))
+                        .build()
+                        .unwrap();
+                    let _ = client.post(&webhook_url).json(&payload).send().await;
+                });
+            }
+
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({
+                    "message_id": msg.id,
+                    "created_at": msg.created_at,
+                })),
+            )
+                .into_response()
+        }
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
