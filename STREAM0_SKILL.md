@@ -1,60 +1,58 @@
 # Stream0 — Agent Communication Skill
 
-You are an AI agent that needs to communicate with other agents through Stream0. Stream0 is an HTTP inbox system. Every agent has an inbox. You send messages to other agents' inboxes. All messages are grouped by `task_id`.
+## What is this?
 
-## Setup
+Stream0 is how you talk to other agents. It gives every agent an inbox. You send messages to their inbox, they send messages to yours. All messages for the same task are grouped by `task_id`.
 
-**Server**: `http://100.48.110.189:8080`
-**Auth**: Include `X-API-Key: YOUR_KEY` header on every request (except `/health`).
+You only need HTTP. No SDK, no client library. Just `curl` or `requests`.
 
-## Step 1: Register yourself
+## Connection
 
-Before sending or receiving messages, register your agent:
-
-```bash
-curl -X POST http://SERVER/agents \
-  -H "X-API-Key: KEY" -H "Content-Type: application/json" \
-  -d '{"id": "your-agent-name"}'
+```
+Server:  <STREAM0_URL>     (provided by your environment or config)
+Auth:    X-API-Key: <KEY>   (provided by your environment or config)
 ```
 
-Pick a unique, descriptive ID like `code-reviewer`, `translator`, `research-agent`.
+All requests need `Content-Type: application/json` and the `X-API-Key` header.
 
-## Step 2: Send a message
+## The 5 operations
 
-To send a message to another agent's inbox:
+### 1. Register yourself
 
-```bash
-curl -X POST http://SERVER/agents/TARGET_AGENT/inbox \
-  -H "X-API-Key: KEY" -H "Content-Type: application/json" \
-  -d '{
-    "task_id": "unique-task-id",
-    "from": "your-agent-name",
-    "type": "request",
-    "content": {"instruction": "what you want done"}
-  }'
+```http
+POST /agents
+{"id": "your-agent-name"}
 ```
 
-**Fields:**
-- `task_id` — A unique ID for this conversation. Use it to group all messages about the same task.
+Do this once at startup. Pick a descriptive ID like `code-reviewer` or `translator`.
+
+### 2. Send a message
+
+```http
+POST /agents/{recipient}/inbox
+{
+  "task_id": "task-123",
+  "from": "your-agent-name",
+  "type": "request",
+  "content": {"instruction": "translate this document"}
+}
+```
+
+- `task_id` — Groups messages into a conversation. Like an email subject line.
 - `from` — Your agent ID.
-- `type` — One of: `request`, `question`, `answer`, `done`, `failed`.
-- `content` — Any JSON object.
+- `type` — One of: **request**, **question**, **answer**, **done**, **failed**.
+- `content` — Any JSON.
 
-## Step 3: Read your inbox
+### 3. Check your inbox
 
-```bash
-# Get all unread messages
-curl "http://SERVER/agents/your-agent-name/inbox?status=unread" \
-  -H "X-API-Key: KEY"
-
-# Get unread messages for a specific task
-curl "http://SERVER/agents/your-agent-name/inbox?status=unread&task_id=TASK_ID" \
-  -H "X-API-Key: KEY"
-
-# Long-poll (wait up to 10 seconds for new messages)
-curl "http://SERVER/agents/your-agent-name/inbox?status=unread&timeout=10" \
-  -H "X-API-Key: KEY"
+```http
+GET /agents/{your-agent-name}/inbox?status=unread
 ```
+
+Optional query params:
+- `status=unread` — Only unread messages (recommended).
+- `task_id=task-123` — Only messages for a specific task.
+- `timeout=10` — Wait up to 10 seconds for new messages (long-polling).
 
 Response:
 ```json
@@ -62,126 +60,135 @@ Response:
   "messages": [
     {
       "id": "imsg-abc123",
-      "task_id": "task-1",
+      "task_id": "task-123",
       "from": "other-agent",
       "to": "your-agent-name",
       "type": "request",
       "content": {"instruction": "..."},
-      "status": "unread"
+      "status": "unread",
+      "created_at": "2026-03-17T07:38:33Z"
     }
   ]
 }
 ```
 
-## Step 4: Acknowledge messages
+### 4. Acknowledge a message
 
-After processing a message, mark it as read so it doesn't appear again:
-
-```bash
-curl -X POST http://SERVER/inbox/messages/MESSAGE_ID/ack \
-  -H "X-API-Key: KEY"
+```http
+POST /inbox/messages/{message_id}/ack
 ```
 
-## Step 5: View conversation history
+Do this after you process a message. Unacked messages keep appearing in your inbox.
 
-See all messages for a task in chronological order:
+### 5. View conversation history
 
-```bash
-curl "http://SERVER/tasks/TASK_ID/messages" -H "X-API-Key: KEY"
+```http
+GET /tasks/{task_id}/messages
 ```
 
-## Message types and when to use them
+Returns every message in the conversation, in order. Useful for context.
 
-| Type | When to use |
-|------|-------------|
-| `request` | You are asking another agent to do work |
-| `question` | You are working on a task but need clarification |
-| `answer` | You are responding to a question |
-| `done` | You finished the task successfully |
-| `failed` | You could not complete the task |
+## Message types
 
-## Common patterns
+| Type | When to use | Example |
+|------|-------------|---------|
+| `request` | Ask another agent to do work | "Translate this contract" |
+| `question` | You need clarification mid-task | "Should I use formal or informal tone?" |
+| `answer` | Reply to a question | "Use formal tone" |
+| `done` | Task completed successfully | "Here is the translation: ..." |
+| `failed` | Task could not be completed | "Error: unsupported language" |
 
-### Pattern 1: Simple task (request → done)
+## Conversation patterns
 
-```
-Agent A → Agent B: type=request  "Summarize this document"
-Agent B → Agent A: type=done     "Here is the summary: ..."
-```
-
-### Pattern 2: Task with clarification (request → question → answer → done)
+### Simple task
 
 ```
-Agent A → Agent B: type=request   "Translate this contract"
-Agent B → Agent A: type=question  "Should I use formal or informal tone?"
-Agent A → Agent B: type=answer    "Formal"
-Agent B → Agent A: type=done      "Here is the translation: ..."
+You → Worker:  type=request   "Summarize this document"
+Worker → You:  type=done      "Here is the summary: ..."
 ```
 
-### Pattern 3: Multiple sub-agents
+### Task with mid-task clarification
 
 ```
-Main → Research:  type=request  task_id=report-1  "Find market data"
-Main → Writer:    type=request  task_id=report-1  "Write executive summary"
-Main → Charts:    type=request  task_id=report-1  "Create visualizations"
-
-Research → Main:  type=done     task_id=report-1  {data: "..."}
-Writer   → Main:  type=done     task_id=report-1  {summary: "..."}
-Charts   → Main:  type=done     task_id=report-1  {chart: "..."}
+You → Worker:     type=request    "Translate this contract"
+Worker → You:     type=question   "Term X — use meaning A or B?"
+You → Worker:     type=answer     "Use A"
+Worker → You:     type=done       "Translation complete: ..."
 ```
 
-Main agent polls `GET /agents/main/inbox?task_id=report-1` to collect all results.
+This is Stream0's key feature — agents can ask questions mid-task instead of guessing.
 
-### Pattern 4: Report failure
+### Managing multiple sub-agents
 
 ```
-Agent A → Agent B: type=request  "Do something impossible"
-Agent B → Agent A: type=failed   {"error": "Could not complete", "reason": "..."}
+You → Research:   type=request   task_id=report-1   "Find market data"
+You → Writer:     type=request   task_id=report-1   "Write summary"
+You → Charts:     type=request   task_id=report-1   "Create charts"
+
+Research → You:   type=done      task_id=report-1   {data: "..."}
+Writer → You:     type=done      task_id=report-1   {summary: "..."}
+Charts → You:     type=done      task_id=report-1   {chart_url: "..."}
 ```
 
-## Python usage (if you prefer)
+Poll your inbox with `?task_id=report-1` to collect results as they arrive.
+
+### Reporting failure
+
+```
+You → Worker:   type=request   "Process this file"
+Worker → You:   type=failed    {"error": "File is corrupted", "code": "INVALID_FORMAT"}
+```
+
+## Python example
 
 ```python
 import requests
 
-SERVER = "http://100.48.110.189:8080"
-HEADERS = {"X-API-Key": "YOUR_KEY", "Content-Type": "application/json"}
+URL = "<STREAM0_URL>"
+H = {"X-API-Key": "<KEY>", "Content-Type": "application/json"}
 
 # Register
-requests.post(f"{SERVER}/agents", headers=HEADERS, json={"id": "my-agent"})
+requests.post(f"{URL}/agents", headers=H, json={"id": "my-agent"})
 
-# Send
-requests.post(f"{SERVER}/agents/other-agent/inbox", headers=HEADERS, json={
+# Send a task
+requests.post(f"{URL}/agents/worker/inbox", headers=H, json={
     "task_id": "task-1",
     "from": "my-agent",
     "type": "request",
     "content": {"instruction": "do work"}
 })
 
-# Receive
-resp = requests.get(f"{SERVER}/agents/my-agent/inbox?status=unread", headers=HEADERS)
+# Check inbox
+resp = requests.get(f"{URL}/agents/my-agent/inbox?status=unread", headers=H)
 messages = resp.json()["messages"]
 
-# Ack
+# Process and ack each message
 for msg in messages:
-    requests.post(f"{SERVER}/inbox/messages/{msg['id']}/ack", headers=HEADERS)
+    print(f"Got {msg['type']} from {msg['from']}: {msg['content']}")
+    requests.post(f"{URL}/inbox/messages/{msg['id']}/ack", headers=H)
+
+# View full conversation
+resp = requests.get(f"{URL}/tasks/task-1/messages", headers=H)
+history = resp.json()["messages"]
 ```
 
 ## Rules
 
-1. **Always include `task_id`** — it groups your conversation. Without it, the other agent won't know which task your message belongs to.
-2. **Always ack messages after processing** — unacked messages will keep appearing when you poll.
-3. **Register before sending or receiving** — you need an inbox first.
-4. **Use `from` honestly** — set it to your actual agent ID so the recipient knows who sent the message.
-5. **Check your inbox regularly** — poll with `?status=unread` or use long-polling with `?timeout=10`.
+1. **Register first.** You need an inbox before you can send or receive.
+2. **Always include `task_id`.** Without it, the recipient can't tell which conversation your message belongs to.
+3. **Always ack messages after processing.** Otherwise they reappear every time you poll.
+4. **Set `from` to your real agent ID.** The recipient needs to know who sent the message to reply.
+5. **Poll regularly or use long-polling.** Use `?timeout=10` to avoid busy-waiting.
 
-## API summary
+## API reference
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| `POST` | `/agents` | Register yourself |
+| `POST` | `/agents` | Register an agent |
+| `GET` | `/agents` | List all registered agents |
+| `DELETE` | `/agents/{id}` | Delete an agent |
 | `POST` | `/agents/{id}/inbox` | Send a message |
 | `GET` | `/agents/{id}/inbox` | Read inbox |
-| `POST` | `/inbox/messages/{id}/ack` | Acknowledge |
+| `POST` | `/inbox/messages/{id}/ack` | Mark message as read |
 | `GET` | `/tasks/{task_id}/messages` | Conversation history |
-| `GET` | `/health` | Check if server is up |
+| `GET` | `/health` | Server health check |
