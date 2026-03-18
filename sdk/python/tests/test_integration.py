@@ -633,6 +633,56 @@ def test_inbox_isolation(client):
     assert msgs_b[0]["content"]["for"] == "b"
 
 
+def test_agent_aliases(client):
+    """Messages sent to an alias arrive in the canonical inbox."""
+    agent_id = unique_name("agent")
+    alias = unique_name("alias")
+
+    client.register_agent(agent_id, aliases=[alias])
+
+    # Send via alias
+    client.send(alias, "task-1", "sender", "request", {"via": "alias"})
+
+    # Receive on canonical ID
+    messages = client.receive(agent_id, status="unread")
+    assert len(messages) == 1
+    assert messages[0]["to"] == agent_id
+    assert messages[0]["content"]["via"] == "alias"
+
+
+def test_agent_aliases_in_list(client):
+    """Listed agents include their aliases."""
+    agent_id = unique_name("agent")
+    alias1 = unique_name("alias")
+    alias2 = unique_name("alias")
+
+    client.register_agent(agent_id, aliases=[alias1, alias2])
+
+    agents = client.list_agents()
+    agent = next(a for a in agents if a["id"] == agent_id)
+    assert alias1 in agent["aliases"]
+    assert alias2 in agent["aliases"]
+
+
+def test_agent_last_seen(client):
+    """Polling inbox updates last_seen timestamp."""
+    agent_id = unique_name("agent")
+    client.register_agent(agent_id)
+
+    # Before polling, last_seen should be null
+    agents = client.list_agents()
+    agent = next(a for a in agents if a["id"] == agent_id)
+    assert agent.get("last_seen") is None
+
+    # Poll inbox
+    client.receive(agent_id)
+
+    # Now last_seen should be set
+    agents = client.list_agents()
+    agent = next(a for a in agents if a["id"] == agent_id)
+    assert agent.get("last_seen") is not None
+
+
 def test_failed_task(main_agent, worker_agent):
     """Worker reports task failure."""
     task_id = unique_name("task")

@@ -64,6 +64,8 @@ Message types: `request`, `question`, `answer`, `done`, `failed`
 - **Auth**: API key via `X-API-Key` header. Keys in YAML config under `auth.api_keys`. Constant-time comparison (`subtle` crate).
 - **Long-polling**: Both topic consume and inbox endpoints support long-polling with `timeout` param.
 - **Timestamps**: Stored as ISO 8601 strings in SQLite, parsed with chrono. Fixed the epoch-zero bug from the Go version.
+- **Agent aliases**: The `agent_aliases` table maps alternate names to canonical agent IDs. Messages sent to an alias are delivered to the canonical inbox.
+- **Presence**: `last_seen` is updated on the agents row each time an agent polls their inbox.
 
 ## Deployment
 

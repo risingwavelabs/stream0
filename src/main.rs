@@ -102,6 +102,8 @@ struct ReplyRequest {
 #[derive(Deserialize)]
 struct RegisterAgentRequest {
     id: String,
+    #[serde(default)]
+    aliases: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -394,7 +396,7 @@ async fn register_agent_handler(
     State(state): State<SharedState>,
     Json(req): Json<RegisterAgentRequest>,
 ) -> impl IntoResponse {
-    match state.db.register_agent(&req.id) {
+    match state.db.register_agent(&req.id, req.aliases.as_deref()) {
         Ok(agent) => (StatusCode::CREATED, Json(serde_json::to_value(agent).unwrap())).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -419,12 +421,12 @@ async fn send_inbox_message_handler(
     Path(agent_id): Path<String>,
     Json(req): Json<SendInboxRequest>,
 ) -> impl IntoResponse {
-    // Verify target agent exists
-    match state.db.get_agent(&agent_id) {
+    // Resolve alias to canonical agent ID
+    let resolved_id = match state.db.resolve_agent(&agent_id) {
+        Ok(Some(id)) => id,
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "agent not found"),
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-        Ok(Some(_)) => {}
-    }
+    };
 
     // Validate message type
     let valid_types = ["request", "question", "answer", "done", "failed"];
@@ -438,7 +440,7 @@ async fn send_inbox_message_handler(
     match state.db.send_inbox_message(
         &req.task_id,
         &req.from,
-        &agent_id,
+        &resolved_id,
         &req.msg_type,
         req.content.as_ref(),
     ) {
@@ -459,19 +461,22 @@ async fn get_inbox_messages_handler(
     Path(agent_id): Path<String>,
     Query(params): Query<InboxQuery>,
 ) -> impl IntoResponse {
-    // Verify agent exists
-    match state.db.get_agent(&agent_id) {
+    // Resolve alias to canonical agent ID
+    let resolved_id = match state.db.resolve_agent(&agent_id) {
+        Ok(Some(id)) => id,
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "agent not found"),
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-        Ok(Some(_)) => {}
-    }
+    };
+
+    // Track last_seen
+    let _ = state.db.update_last_seen(&resolved_id);
 
     let timeout = params.timeout.unwrap_or(0.0).clamp(0.0, 30.0);
     let start = std::time::Instant::now();
 
     loop {
         match state.db.get_inbox_messages(
-            &agent_id,
+            &resolved_id,
             params.status.as_deref(),
             params.task_id.as_deref(),
         ) {

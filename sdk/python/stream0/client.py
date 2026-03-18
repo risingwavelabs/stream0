@@ -234,18 +234,22 @@ class Stream0Client:
         result = self._handle_response(resp)
         return result.get("agents", [])
 
-    def register_agent(self, agent_id):
+    def register_agent(self, agent_id, aliases=None):
         """Register an agent. Creates its inbox. Idempotent.
 
         Args:
             agent_id: Unique agent identifier.
+            aliases: Optional list of alternative names for this agent.
 
         Returns:
-            Dict with id and created_at.
+            Dict with id, aliases, created_at, and last_seen.
         """
+        body = {"id": agent_id}
+        if aliases:
+            body["aliases"] = aliases
         resp = self._session.post(
             self._url("/agents"),
-            json={"id": agent_id},
+            json=body,
             timeout=self.timeout,
         )
         return self._handle_response(resp)
@@ -371,13 +375,14 @@ class Agent:
         agent.ack(messages[0]["id"])
     """
 
-    def __init__(self, agent_id, url="http://localhost:8080", api_key=None, timeout=30):
+    def __init__(self, agent_id, url="http://localhost:8080", api_key=None, timeout=30, aliases=None):
         self.agent_id = agent_id
+        self.aliases = aliases
         self.client = Stream0Client(url, api_key=api_key, timeout=timeout)
 
     def register(self):
         """Register this agent with stream0."""
-        return self.client.register_agent(self.agent_id)
+        return self.client.register_agent(self.agent_id, aliases=self.aliases)
 
     def send(self, to, task_id, msg_type, content=None):
         """Send a message to another agent's inbox."""

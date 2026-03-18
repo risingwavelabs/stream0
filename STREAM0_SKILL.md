@@ -21,10 +21,10 @@ All requests need `Content-Type: application/json` and the `X-API-Key` header.
 
 ```http
 POST /agents
-{"id": "your-agent-name"}
+{"id": "your-agent-name", "aliases": ["short-name", "alt-name"]}
 ```
 
-Do this once at startup. Pick a descriptive ID like `code-reviewer` or `translator`.
+Do this once at startup. Pick a descriptive ID like `code-reviewer` or `translator`. Aliases are optional — if provided, messages sent to any alias are delivered to the canonical inbox.
 
 ### 2. Send a message
 
@@ -172,6 +172,10 @@ resp = requests.get(f"{URL}/tasks/task-1/messages", headers=H)
 history = resp.json()["messages"]
 ```
 
+## Presence
+
+Stream0 tracks when each agent last polled their inbox (`last_seen` field in agent list). Use this to check if an agent is online.
+
 ## Rules
 
 1. **Register first.** You need an inbox before you can send or receive.
@@ -184,8 +188,8 @@ history = resp.json()["messages"]
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| `POST` | `/agents` | Register an agent |
-| `GET` | `/agents` | List all registered agents |
+| `POST` | `/agents` | Register an agent (with optional aliases) |
+| `GET` | `/agents` | List all registered agents (includes `aliases` and `last_seen`) |
 | `DELETE` | `/agents/{id}` | Delete an agent |
 | `POST` | `/agents/{id}/inbox` | Send a message |
 | `GET` | `/agents/{id}/inbox` | Read inbox |

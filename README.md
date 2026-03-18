@@ -110,7 +110,7 @@ Returns all 4 messages in chronological order — the complete audit trail.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/agents` | Register an agent (creates inbox) |
+| `POST` | `/agents` | Register an agent (creates inbox). Accepts optional `aliases` array for alternate names. |
 | `DELETE` | `/agents/{id}` | Delete an agent |
 | `POST` | `/agents/{id}/inbox` | Send a message to an agent's inbox |
 | `GET` | `/agents/{id}/inbox` | Read messages from an agent's inbox |
@@ -268,6 +268,7 @@ Every message carries the same `task_id`. The main agent always knows which conv
 - **task_id is the conversation.** Like an email subject line — groups related messages.
 - **Polling is fine.** Agents think for 30+ seconds. A few seconds of message latency is irrelevant.
 - **Idempotency is the caller's responsibility.** Stream0 persists messages and delivers at-least-once. If your agent crashes and restarts, it will re-process unacked messages. Design accordingly.
+- **Agent presence.** Stream0 tracks `last_seen` timestamps each time an agent polls its inbox. Use `GET /agents` to check which agents are online.
 
 ## License
 

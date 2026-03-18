@@ -35,7 +35,12 @@ pub struct Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Agent {
     pub id: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
+    pub aliases: Vec<String>,
     pub created_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seen: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,7 +144,14 @@ impl Database {
 
             CREATE TABLE IF NOT EXISTS agents (
                 id TEXT PRIMARY KEY,
-                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                last_seen TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_aliases (
+                alias TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS inbox_messages (
@@ -473,59 +485,140 @@ impl Database {
     pub fn list_agents(&self) -> Result<Vec<Agent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, created_at FROM agents ORDER BY created_at ASC",
+            "SELECT id, created_at, last_seen FROM agents ORDER BY created_at ASC",
         )?;
-        let agents = stmt
+        let agents: Vec<Agent> = stmt
             .query_map([], |row| {
                 let ts: String = row.get(1)?;
-                Ok(Agent {
-                    id: row.get(0)?,
-                    created_at: Database::parse_ts(&ts),
-                })
+                let ls: Option<String> = row.get(2)?;
+                Ok((
+                    row.get::<_, String>(0)?,
+                    ts,
+                    ls,
+                ))
             })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|(id, ts, ls)| {
+                let aliases = self.get_aliases_inner(&conn, &id);
+                Agent {
+                    id,
+                    aliases,
+                    created_at: Database::parse_ts(&ts),
+                    last_seen: ls.map(|s| Database::parse_ts(&s)),
+                }
+            })
+            .collect();
         Ok(agents)
     }
 
-    pub fn register_agent(&self, id: &str) -> Result<Agent> {
+    pub fn register_agent(&self, id: &str, aliases: Option<&[String]>) -> Result<Agent> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR IGNORE INTO agents (id) VALUES (?1)",
             params![id],
         )?;
-        conn.query_row(
-            "SELECT id, created_at FROM agents WHERE id = ?1",
+
+        // Update aliases if provided
+        if let Some(alias_list) = aliases {
+            // Remove old aliases for this agent
+            conn.execute("DELETE FROM agent_aliases WHERE agent_id = ?1", params![id])?;
+            for alias in alias_list {
+                conn.execute(
+                    "INSERT OR REPLACE INTO agent_aliases (alias, agent_id) VALUES (?1, ?2)",
+                    params![alias, id],
+                )?;
+            }
+        }
+
+        let (ts, ls): (String, Option<String>) = conn.query_row(
+            "SELECT created_at, last_seen FROM agents WHERE id = ?1",
             params![id],
-            |row| {
-                let ts: String = row.get(1)?;
-                Ok(Agent {
-                    id: row.get(0)?,
-                    created_at: Database::parse_ts(&ts),
-                })
-            },
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+
+        let agent_aliases = self.get_aliases_inner(&conn, id);
+
+        Ok(Agent {
+            id: id.to_string(),
+            aliases: agent_aliases,
+            created_at: Database::parse_ts(&ts),
+            last_seen: ls.map(|s| Database::parse_ts(&s)),
+        })
+    }
+
+    fn get_aliases_inner(&self, conn: &Connection, agent_id: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT alias FROM agent_aliases WHERE agent_id = ?1")
+            .unwrap();
+        stmt.query_map(params![agent_id], |row| row.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect()
+    }
+
+    /// Resolve an agent ID or alias to the canonical agent ID
+    pub fn resolve_agent(&self, id_or_alias: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        // Check direct ID first
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agents WHERE id = ?1",
+                params![id_or_alias],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)?;
+
+        if exists {
+            return Ok(Some(id_or_alias.to_string()));
+        }
+
+        // Check aliases
+        conn.query_row(
+            "SELECT agent_id FROM agent_aliases WHERE alias = ?1",
+            params![id_or_alias],
+            |row| row.get::<_, String>(0),
         )
+        .optional()
         .map_err(Into::into)
     }
 
     pub fn get_agent(&self, id: &str) -> Result<Option<Agent>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, created_at FROM agents WHERE id = ?1",
+            "SELECT id, created_at, last_seen FROM agents WHERE id = ?1",
             params![id],
             |row| {
                 let ts: String = row.get(1)?;
-                Ok(Agent {
-                    id: row.get(0)?,
-                    created_at: Database::parse_ts(&ts),
-                })
+                let ls: Option<String> = row.get(2)?;
+                Ok((row.get::<_, String>(0)?, ts, ls))
             },
         )
-        .optional()
-        .map_err(Into::into)
+        .optional()?
+        .map(|(id, ts, ls)| {
+            let aliases = self.get_aliases_inner(&conn, &id);
+            Ok(Agent {
+                id,
+                aliases,
+                created_at: Database::parse_ts(&ts),
+                last_seen: ls.map(|s| Database::parse_ts(&s)),
+            })
+        })
+        .transpose()
+    }
+
+    pub fn update_last_seen(&self, agent_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE agents SET last_seen = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
+            params![agent_id],
+        )?;
+        Ok(())
     }
 
     pub fn delete_agent(&self, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM agent_aliases WHERE agent_id = ?1", params![id])?;
         let deleted = conn.execute("DELETE FROM agents WHERE id = ?1", params![id])?;
         if deleted == 0 {
             anyhow::bail!("agent not found");
