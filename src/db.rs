@@ -145,20 +145,25 @@ impl Database {
             );
 
             CREATE TABLE IF NOT EXISTS agents (
-                id TEXT PRIMARY KEY,
+                tenant TEXT NOT NULL DEFAULT 'default',
+                id TEXT NOT NULL,
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
                 last_seen TEXT,
-                webhook TEXT
+                webhook TEXT,
+                PRIMARY KEY (tenant, id)
             );
 
             CREATE TABLE IF NOT EXISTS agent_aliases (
-                alias TEXT PRIMARY KEY,
+                tenant TEXT NOT NULL DEFAULT 'default',
+                alias TEXT NOT NULL,
                 agent_id TEXT NOT NULL,
-                FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+                PRIMARY KEY (tenant, alias),
+                FOREIGN KEY (tenant, agent_id) REFERENCES agents(tenant, id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS inbox_messages (
                 id TEXT PRIMARY KEY,
+                tenant TEXT NOT NULL DEFAULT 'default',
                 task_id TEXT NOT NULL,
                 from_agent TEXT NOT NULL,
                 to_agent TEXT NOT NULL,
@@ -172,9 +177,9 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_leases_expires ON leases(expires_at);
             CREATE INDEX IF NOT EXISTS idx_leases_group ON leases(consumer_group);
             CREATE INDEX IF NOT EXISTS idx_replies_created ON replies(created_at);
-            CREATE INDEX IF NOT EXISTS idx_inbox_to_status ON inbox_messages(to_agent, status);
-            CREATE INDEX IF NOT EXISTS idx_inbox_task ON inbox_messages(task_id);
-            CREATE INDEX IF NOT EXISTS idx_inbox_to_task ON inbox_messages(to_agent, task_id);
+            CREATE INDEX IF NOT EXISTS idx_inbox_tenant_to_status ON inbox_messages(tenant, to_agent, status);
+            CREATE INDEX IF NOT EXISTS idx_inbox_tenant_task ON inbox_messages(tenant, task_id);
+            CREATE INDEX IF NOT EXISTS idx_inbox_tenant_to_task ON inbox_messages(tenant, to_agent, task_id);
             ",
         )?;
         Ok(())
@@ -485,13 +490,13 @@ impl Database {
 
     // --- Agents (Inbox Model) ---
 
-    pub fn list_agents(&self) -> Result<Vec<Agent>> {
+    pub fn list_agents(&self, tenant: &str) -> Result<Vec<Agent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, created_at, last_seen, webhook FROM agents ORDER BY created_at ASC",
+            "SELECT id, created_at, last_seen, webhook FROM agents WHERE tenant = ?1 ORDER BY created_at ASC",
         )?;
         let agents: Vec<Agent> = stmt
-            .query_map([], |row| {
+            .query_map(params![tenant], |row| {
                 let ts: String = row.get(1)?;
                 let ls: Option<String> = row.get(2)?;
                 let wh: Option<String> = row.get(3)?;
@@ -505,7 +510,7 @@ impl Database {
             .collect::<std::result::Result<Vec<_>, _>>()?
             .into_iter()
             .map(|(id, ts, ls, wh)| {
-                let aliases = self.get_aliases_inner(&conn, &id);
+                let aliases = self.get_aliases_inner(&conn, tenant, &id);
                 Agent {
                     id,
                     aliases,
@@ -518,39 +523,39 @@ impl Database {
         Ok(agents)
     }
 
-    pub fn register_agent(&self, id: &str, aliases: Option<&[String]>, webhook: Option<&str>) -> Result<Agent> {
+    pub fn register_agent(&self, tenant: &str, id: &str, aliases: Option<&[String]>, webhook: Option<&str>) -> Result<Agent> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR IGNORE INTO agents (id) VALUES (?1)",
-            params![id],
+            "INSERT OR IGNORE INTO agents (tenant, id) VALUES (?1, ?2)",
+            params![tenant, id],
         )?;
 
         // Update webhook if provided
         if let Some(wh) = webhook {
             conn.execute(
-                "UPDATE agents SET webhook = ?1 WHERE id = ?2",
-                params![wh, id],
+                "UPDATE agents SET webhook = ?1 WHERE tenant = ?2 AND id = ?3",
+                params![wh, tenant, id],
             )?;
         }
 
         // Update aliases if provided
         if let Some(alias_list) = aliases {
-            conn.execute("DELETE FROM agent_aliases WHERE agent_id = ?1", params![id])?;
+            conn.execute("DELETE FROM agent_aliases WHERE tenant = ?1 AND agent_id = ?2", params![tenant, id])?;
             for alias in alias_list {
                 conn.execute(
-                    "INSERT OR REPLACE INTO agent_aliases (alias, agent_id) VALUES (?1, ?2)",
-                    params![alias, id],
+                    "INSERT OR REPLACE INTO agent_aliases (tenant, alias, agent_id) VALUES (?1, ?2, ?3)",
+                    params![tenant, alias, id],
                 )?;
             }
         }
 
         let (ts, ls, wh): (String, Option<String>, Option<String>) = conn.query_row(
-            "SELECT created_at, last_seen, webhook FROM agents WHERE id = ?1",
-            params![id],
+            "SELECT created_at, last_seen, webhook FROM agents WHERE tenant = ?1 AND id = ?2",
+            params![tenant, id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
 
-        let agent_aliases = self.get_aliases_inner(&conn, id);
+        let agent_aliases = self.get_aliases_inner(&conn, tenant, id);
 
         Ok(Agent {
             id: id.to_string(),
@@ -561,24 +566,24 @@ impl Database {
         })
     }
 
-    fn get_aliases_inner(&self, conn: &Connection, agent_id: &str) -> Vec<String> {
+    fn get_aliases_inner(&self, conn: &Connection, tenant: &str, agent_id: &str) -> Vec<String> {
         let mut stmt = conn
-            .prepare("SELECT alias FROM agent_aliases WHERE agent_id = ?1")
+            .prepare("SELECT alias FROM agent_aliases WHERE tenant = ?1 AND agent_id = ?2")
             .unwrap();
-        stmt.query_map(params![agent_id], |row| row.get(0))
+        stmt.query_map(params![tenant, agent_id], |row| row.get(0))
             .unwrap()
             .filter_map(|r| r.ok())
             .collect()
     }
 
     /// Resolve an agent ID or alias to the canonical agent ID
-    pub fn resolve_agent(&self, id_or_alias: &str) -> Result<Option<String>> {
+    pub fn resolve_agent(&self, tenant: &str, id_or_alias: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         // Check direct ID first
         let exists: bool = conn
             .query_row(
-                "SELECT COUNT(*) FROM agents WHERE id = ?1",
-                params![id_or_alias],
+                "SELECT COUNT(*) FROM agents WHERE tenant = ?1 AND id = ?2",
+                params![tenant, id_or_alias],
                 |row| row.get::<_, i64>(0),
             )
             .map(|c| c > 0)?;
@@ -589,19 +594,19 @@ impl Database {
 
         // Check aliases
         conn.query_row(
-            "SELECT agent_id FROM agent_aliases WHERE alias = ?1",
-            params![id_or_alias],
+            "SELECT agent_id FROM agent_aliases WHERE tenant = ?1 AND alias = ?2",
+            params![tenant, id_or_alias],
             |row| row.get::<_, String>(0),
         )
         .optional()
         .map_err(Into::into)
     }
 
-    pub fn get_agent(&self, id: &str) -> Result<Option<Agent>> {
+    pub fn get_agent(&self, tenant: &str, id: &str) -> Result<Option<Agent>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, created_at, last_seen, webhook FROM agents WHERE id = ?1",
-            params![id],
+            "SELECT id, created_at, last_seen, webhook FROM agents WHERE tenant = ?1 AND id = ?2",
+            params![tenant, id],
             |row| {
                 let ts: String = row.get(1)?;
                 let ls: Option<String> = row.get(2)?;
@@ -611,7 +616,7 @@ impl Database {
         )
         .optional()?
         .map(|(id, ts, ls, wh)| {
-            let aliases = self.get_aliases_inner(&conn, &id);
+            let aliases = self.get_aliases_inner(&conn, tenant, &id);
             Ok(Agent {
                 id,
                 aliases,
@@ -623,11 +628,11 @@ impl Database {
         .transpose()
     }
 
-    pub fn get_agent_webhook(&self, agent_id: &str) -> Result<Option<String>> {
+    pub fn get_agent_webhook(&self, tenant: &str, agent_id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT webhook FROM agents WHERE id = ?1",
-            params![agent_id],
+            "SELECT webhook FROM agents WHERE tenant = ?1 AND id = ?2",
+            params![tenant, agent_id],
             |row| row.get::<_, Option<String>>(0),
         )
         .optional()
@@ -635,19 +640,19 @@ impl Database {
         .map_err(Into::into)
     }
 
-    pub fn update_last_seen(&self, agent_id: &str) -> Result<()> {
+    pub fn update_last_seen(&self, tenant: &str, agent_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE agents SET last_seen = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-            params![agent_id],
+            "UPDATE agents SET last_seen = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE tenant = ?1 AND id = ?2",
+            params![tenant, agent_id],
         )?;
         Ok(())
     }
 
-    pub fn delete_agent(&self, id: &str) -> Result<()> {
+    pub fn delete_agent(&self, tenant: &str, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM agent_aliases WHERE agent_id = ?1", params![id])?;
-        let deleted = conn.execute("DELETE FROM agents WHERE id = ?1", params![id])?;
+        conn.execute("DELETE FROM agent_aliases WHERE tenant = ?1 AND agent_id = ?2", params![tenant, id])?;
+        let deleted = conn.execute("DELETE FROM agents WHERE tenant = ?1 AND id = ?2", params![tenant, id])?;
         if deleted == 0 {
             anyhow::bail!("agent not found");
         }
@@ -656,6 +661,7 @@ impl Database {
 
     pub fn send_inbox_message(
         &self,
+        tenant: &str,
         task_id: &str,
         from: &str,
         to: &str,
@@ -667,8 +673,8 @@ impl Database {
         let content_str = content.map(|c| serde_json::to_string(c).unwrap_or_default());
 
         conn.execute(
-            "INSERT INTO inbox_messages (id, task_id, from_agent, to_agent, type, content) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![msg_id, task_id, from, to, msg_type, content_str],
+            "INSERT INTO inbox_messages (id, tenant, task_id, from_agent, to_agent, type, content) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![msg_id, tenant, task_id, from, to, msg_type, content_str],
         )?;
 
         let ts: String = conn.query_row(
@@ -691,16 +697,17 @@ impl Database {
 
     pub fn get_inbox_messages(
         &self,
+        tenant: &str,
         agent_id: &str,
         status: Option<&str>,
         task_id: Option<&str>,
     ) -> Result<Vec<InboxMessage>> {
         let conn = self.conn.lock().unwrap();
         let mut query =
-            "SELECT id, task_id, from_agent, to_agent, type, content, status, created_at FROM inbox_messages WHERE to_agent = ?1"
+            "SELECT id, task_id, from_agent, to_agent, type, content, status, created_at FROM inbox_messages WHERE tenant = ?1 AND to_agent = ?2"
                 .to_string();
-        let mut param_idx = 2;
-        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(agent_id.to_string())];
+        let mut param_idx = 3;
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(tenant.to_string()), Box::new(agent_id.to_string())];
 
         if let Some(s) = status {
             query += &format!(" AND status = ?{}", param_idx);
@@ -735,11 +742,11 @@ impl Database {
         Ok(messages)
     }
 
-    pub fn ack_inbox_message(&self, message_id: &str) -> Result<()> {
+    pub fn ack_inbox_message(&self, tenant: &str, message_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let updated = conn.execute(
-            "UPDATE inbox_messages SET status = 'acked' WHERE id = ?1 AND status = 'unread'",
-            params![message_id],
+            "UPDATE inbox_messages SET status = 'acked' WHERE id = ?1 AND tenant = ?2 AND status = 'unread'",
+            params![message_id, tenant],
         )?;
         if updated == 0 {
             anyhow::bail!("message not found or already acked");
@@ -747,14 +754,14 @@ impl Database {
         Ok(())
     }
 
-    pub fn get_task_messages(&self, task_id: &str) -> Result<Vec<InboxMessage>> {
+    pub fn get_task_messages(&self, tenant: &str, task_id: &str) -> Result<Vec<InboxMessage>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, task_id, from_agent, to_agent, type, content, status, created_at
-             FROM inbox_messages WHERE task_id = ?1 ORDER BY created_at ASC",
+             FROM inbox_messages WHERE tenant = ?1 AND task_id = ?2 ORDER BY created_at ASC",
         )?;
         let messages = stmt
-            .query_map(params![task_id], |row| {
+            .query_map(params![tenant, task_id], |row| {
                 let content_str: Option<String> = row.get(5)?;
                 let ts: String = row.get(7)?;
                 Ok(InboxMessage {

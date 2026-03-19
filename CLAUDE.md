@@ -61,7 +61,8 @@ Message types: `request`, `question`, `answer`, `done`, `failed`
 - **Language**: Rust (axum + rusqlite + serde + tokio)
 - **SQLite**: Uses `rusqlite` with `bundled` feature (compiles SQLite from source, no system dependency)
 - **Config loading**: YAML parsed with serde_yaml. Env vars override only when set.
-- **Auth**: API key via `X-API-Key` header. Keys in YAML config under `auth.api_keys`. Constant-time comparison (`subtle` crate).
+- **Auth**: API key via `X-API-Key` header. Constant-time comparison (`subtle` crate). Supports both flat `auth.api_keys` (all map to "default" tenant) and `auth.tenants` (per-tenant key scoping).
+- **Multi-tenancy**: Each API key maps to a tenant. Agents and messages are fully isolated between tenants. Two teams can use the same Stream0 instance without seeing each other's data.
 - **Long-polling**: Both topic consume and inbox endpoints support long-polling with `timeout` param.
 - **Timestamps**: Stored as ISO 8601 strings in SQLite, parsed with chrono. Fixed the epoch-zero bug from the Go version.
 - **Agent aliases**: The `agent_aliases` table maps alternate names to canonical agent IDs. Messages sent to an alias are delivered to the canonical inbox.

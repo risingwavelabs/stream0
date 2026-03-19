@@ -397,6 +397,21 @@ With API keys enabled, all requests need the `X-API-Key` header:
 curl -H "X-API-Key: your-secret-key-here" http://yourserver:8080/agents
 ```
 
+### Multi-tenancy
+
+Multiple teams can share one Stream0 instance with full data isolation:
+
+```yaml
+auth:
+  tenants:
+    - name: "team-alpha"
+      api_keys: ["sk-alpha-xxx"]
+    - name: "team-beta"
+      api_keys: ["sk-beta-yyy"]
+```
+
+Each team's agents and messages are completely invisible to the other. Both teams can register an agent called `translator` without conflict.
+
 ## API reference
 
 | Method | Endpoint | Description |

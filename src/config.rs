@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::fs;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -35,10 +36,46 @@ pub struct LogConfig {
     pub format: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct TenantConfig {
+    pub name: String,
+    pub api_keys: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AuthConfig {
+    /// Simple flat API keys (backward compatible, all map to "default" tenant)
     #[serde(default)]
     pub api_keys: Vec<String>,
+    /// Tenant-scoped API keys
+    #[serde(default)]
+    pub tenants: Vec<TenantConfig>,
+}
+
+impl AuthConfig {
+    /// Build a map of api_key -> tenant_name for fast lookup
+    pub fn build_key_map(&self) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        // Flat api_keys → "default" tenant
+        for key in &self.api_keys {
+            map.insert(key.clone(), "default".to_string());
+        }
+        // Tenant-scoped keys
+        for tenant in &self.tenants {
+            for key in &tenant.api_keys {
+                map.insert(key.clone(), tenant.name.clone());
+            }
+        }
+        map
+    }
+
+    pub fn has_keys(&self) -> bool {
+        !self.api_keys.is_empty() || self.tenants.iter().any(|t| !t.api_keys.is_empty())
+    }
+
+    pub fn total_keys(&self) -> usize {
+        self.api_keys.len() + self.tenants.iter().map(|t| t.api_keys.len()).sum::<usize>()
+    }
 }
 
 fn default_server() -> ServerConfig {

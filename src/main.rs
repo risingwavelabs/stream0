@@ -7,10 +7,11 @@ use axum::{
     middleware::{self, Next},
     response::{IntoResponse, Json},
     routing::{delete, get, post},
-    Router,
+    Extension, Router,
 };
 use clap::Parser;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
 use tokio::signal;
@@ -19,11 +20,16 @@ use tower_http::cors::CorsLayer;
 use config::Config;
 use db::Database;
 
+// --- Tenant ---
+
+#[derive(Clone)]
+struct Tenant(String);
+
 // --- App State ---
 
 struct AppState {
     db: Database,
-    api_keys: Vec<String>,
+    key_map: HashMap<String, String>,
 }
 
 type SharedState = Arc<AppState>;
@@ -133,10 +139,12 @@ struct InboxQuery {
 async fn auth_middleware(
     State(state): State<SharedState>,
     headers: HeaderMap,
-    request: axum::extract::Request,
+    mut request: axum::extract::Request,
     next: Next,
 ) -> impl IntoResponse {
-    if state.api_keys.is_empty() {
+    if state.key_map.is_empty() {
+        // No auth configured — use default tenant
+        request.extensions_mut().insert(Tenant("default".to_string()));
         return next.run(request).await;
     }
 
@@ -154,20 +162,24 @@ async fn auth_middleware(
     }
 
     let key_bytes = key.as_bytes();
-    let valid = state
-        .api_keys
+    // Find the matching key using constant-time comparison and extract its tenant
+    let tenant = state
+        .key_map
         .iter()
-        .any(|k| key_bytes.ct_eq(k.as_bytes()).into());
+        .find(|(k, _)| key_bytes.ct_eq(k.as_bytes()).into())
+        .map(|(_, tenant)| tenant.clone());
 
-    if !valid {
-        return (
+    match tenant {
+        Some(t) => {
+            request.extensions_mut().insert(Tenant(t));
+            next.run(request).await
+        }
+        None => (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"error": "invalid API key"})),
         )
-            .into_response();
+            .into_response(),
     }
-
-    next.run(request).await
 }
 
 // --- Handlers: Health ---
@@ -387,8 +399,9 @@ async fn reply_handler(
 
 async fn list_agents_handler(
     State(state): State<SharedState>,
+    Extension(Tenant(tenant)): Extension<Tenant>,
 ) -> impl IntoResponse {
-    match state.db.list_agents() {
+    match state.db.list_agents(&tenant) {
         Ok(agents) => (StatusCode::OK, Json(serde_json::json!({"agents": agents}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -396,9 +409,10 @@ async fn list_agents_handler(
 
 async fn register_agent_handler(
     State(state): State<SharedState>,
+    Extension(Tenant(tenant)): Extension<Tenant>,
     Json(req): Json<RegisterAgentRequest>,
 ) -> impl IntoResponse {
-    match state.db.register_agent(&req.id, req.aliases.as_deref(), req.webhook.as_deref()) {
+    match state.db.register_agent(&tenant, &req.id, req.aliases.as_deref(), req.webhook.as_deref()) {
         Ok(agent) => (StatusCode::CREATED, Json(serde_json::to_value(agent).unwrap())).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -406,9 +420,10 @@ async fn register_agent_handler(
 
 async fn delete_agent_handler(
     State(state): State<SharedState>,
+    Extension(Tenant(tenant)): Extension<Tenant>,
     Path(agent_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.delete_agent(&agent_id) {
+    match state.db.delete_agent(&tenant, &agent_id) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "deleted", "agent_id": agent_id})),
@@ -420,11 +435,12 @@ async fn delete_agent_handler(
 
 async fn send_inbox_message_handler(
     State(state): State<SharedState>,
+    Extension(Tenant(tenant)): Extension<Tenant>,
     Path(agent_id): Path<String>,
     Json(req): Json<SendInboxRequest>,
 ) -> impl IntoResponse {
     // Resolve alias to canonical agent ID
-    let resolved_id = match state.db.resolve_agent(&agent_id) {
+    let resolved_id = match state.db.resolve_agent(&tenant, &agent_id) {
         Ok(Some(id)) => id,
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "agent not found"),
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
@@ -440,6 +456,7 @@ async fn send_inbox_message_handler(
     }
 
     match state.db.send_inbox_message(
+        &tenant,
         &req.task_id,
         &req.from,
         &resolved_id,
@@ -448,7 +465,7 @@ async fn send_inbox_message_handler(
     ) {
         Ok(msg) => {
             // Fire webhook notification in the background (fire-and-forget)
-            if let Ok(Some(webhook_url)) = state.db.get_agent_webhook(&resolved_id) {
+            if let Ok(Some(webhook_url)) = state.db.get_agent_webhook(&tenant, &resolved_id) {
                 let payload = serde_json::json!({
                     "event": "new_message",
                     "agent_id": resolved_id,
@@ -481,24 +498,26 @@ async fn send_inbox_message_handler(
 
 async fn get_inbox_messages_handler(
     State(state): State<SharedState>,
+    Extension(Tenant(tenant)): Extension<Tenant>,
     Path(agent_id): Path<String>,
     Query(params): Query<InboxQuery>,
 ) -> impl IntoResponse {
     // Resolve alias to canonical agent ID
-    let resolved_id = match state.db.resolve_agent(&agent_id) {
+    let resolved_id = match state.db.resolve_agent(&tenant, &agent_id) {
         Ok(Some(id)) => id,
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "agent not found"),
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
 
     // Track last_seen
-    let _ = state.db.update_last_seen(&resolved_id);
+    let _ = state.db.update_last_seen(&tenant, &resolved_id);
 
     let timeout = params.timeout.unwrap_or(0.0).clamp(0.0, 30.0);
     let start = std::time::Instant::now();
 
     loop {
         match state.db.get_inbox_messages(
+            &tenant,
             &resolved_id,
             params.status.as_deref(),
             params.task_id.as_deref(),
@@ -520,9 +539,10 @@ async fn get_inbox_messages_handler(
 
 async fn ack_inbox_message_handler(
     State(state): State<SharedState>,
+    Extension(Tenant(tenant)): Extension<Tenant>,
     Path(message_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.ack_inbox_message(&message_id) {
+    match state.db.ack_inbox_message(&tenant, &message_id) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "acked", "message_id": message_id})),
@@ -534,9 +554,10 @@ async fn ack_inbox_message_handler(
 
 async fn get_task_messages_handler(
     State(state): State<SharedState>,
+    Extension(Tenant(tenant)): Extension<Tenant>,
     Path(task_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.get_task_messages(&task_id) {
+    match state.db.get_task_messages(&tenant, &task_id) {
         Ok(messages) => (StatusCode::OK, Json(serde_json::json!({"messages": messages}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -572,15 +593,17 @@ async fn main() {
 
     let db = Database::new(&cfg.database.path).expect("failed to initialize database");
 
-    if !cfg.auth.api_keys.is_empty() {
-        tracing::info!(keys = cfg.auth.api_keys.len(), "API key authentication enabled");
+    let key_map = cfg.auth.build_key_map();
+
+    if cfg.auth.has_keys() {
+        tracing::info!(keys = cfg.auth.total_keys(), "API key authentication enabled");
     } else {
         tracing::warn!("No API keys configured - all endpoints are unauthenticated");
     }
 
     let state = Arc::new(AppState {
         db,
-        api_keys: cfg.auth.api_keys.clone(),
+        key_map,
     });
 
     // Public routes (no auth)
