@@ -175,6 +175,9 @@ await mcp.connect(new StdioServerTransport());
 await stream0Post("/agents", { id: AGENT_ID });
 console.error(`[stream0-channel] Registered as ${AGENT_ID}, polling inbox...`);
 
+// Track pushed message IDs to avoid duplicates
+const pushed = new Set<string>();
+
 // Poll inbox and push events to Claude Code
 async function pollLoop() {
   while (true) {
@@ -186,6 +189,9 @@ async function pollLoop() {
 
       const messages = result?.messages || [];
       for (const msg of messages) {
+        if (pushed.has(msg.id)) continue;
+        pushed.add(msg.id);
+
         console.error(
           `[stream0-channel] Pushing [${msg.type}] from ${msg.from} (thread: ${msg.thread_id})`
         );
