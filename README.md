@@ -4,61 +4,23 @@ A messaging layer for AI agents. Each agent gets an inbox. Messages are grouped 
 
 ## What it does
 
-Stream0 sits between AI agents and routes messages. You talk to your primary agent (e.g. Claude Code). When it needs another agent's help, it sends a message through Stream0 and gets the result back.
+Stream0 sits between agents and routes messages. Any agent that can make HTTP requests can use it.
 
 ```
-Your Claude Code          Stream0           Reviewer agent
-     |                       |                      |
-     |  sends request        |                      |
-     |  ─────────────>  stores in inbox              |
-     |                       |  ─────────────>       |
-     |                       |  reviewer picks it up |
-     |                       |  <─────────────       |
-     |  gets result back     |                      |
-     |  <─────────────       |                      |
+Agent A                   Stream0              Agent B
+  |                          |                    |
+  |  POST /agents/b/inbox   |                    |
+  |  ────────────────>  stores in inbox           |
+  |                          |  GET /inbox        |
+  |                          |  ────────────>     |
+  |                          |  <────────────     |
+  |  GET /agents/a/inbox     |  POST /agents/a/inbox
+  |  <────────────────       |                    |
 ```
 
-You don't interact with Stream0 directly. You tell your agent what you want, and it handles the coordination.
-
-## Example
-
-You're in Claude Code, writing code. You want another agent to review your changes:
-
-```
-You: ask the reviewer to look at my latest changes
-```
-
-Claude Code sends the diff to a reviewer agent through Stream0, waits for the response, and shows you the result:
-
-```
-Claude Code: reviewer responded with 2 issues:
-
-             1. src/handler.rs:42 - The timeout error case is unhandled.
-                This will panic instead of returning a 504.
-
-             2. src/handler.rs:67 - `process()` is too generic.
-                Rename to `validate_input()`.
-
-             Want me to apply these suggestions?
-
-You: yes fix both
-```
-
-The reviewer is a separate Claude Code instance connected to Stream0. Both agents run independently. Stream0 handles the message passing.
-
-## Scenarios
-
-- **Code review**: your agent sends a diff to a reviewer agent, gets feedback back
-- **Parallel review**: your agent sends to both a reviewer and an architect, collects both responses
-- **Security audit**: your agent asks a security-focused agent to scan for vulnerabilities
-- **Multi-turn discussion**: agents go back and forth on the same thread (question/answer) before resolving
-- **Task delegation**: your agent hands off a subtask and polls for the result
+Stream0 doesn't care what your agents are. Claude Code, Codex, a Python script, a curl command. If it speaks HTTP, it can send and receive messages.
 
 ## Getting started
-
-> **Note:** Stream0 uses Claude Code's [channel](https://docs.anthropic.com/en/docs/claude-code/channels) capability, which is currently in Anthropic's experimental research preview. The `--dangerously-load-development-channels` flag is required until channels are generally available.
-
-> **Warning:** Worker agents launched by `stream0 agent start` run with `--dangerously-skip-permissions`, which bypasses all permission checks. Only run worker agents in trusted environments.
 
 ### 1. Install and start the server
 
@@ -67,45 +29,109 @@ curl -fsSL https://stream0.dev/install.sh | sh
 stream0
 ```
 
-### 2. Start another agent
+### 2. Register two agents
 
 In a second terminal:
 
 ```bash
-stream0 agent start \
-  --name agent-b \
-  --description "A second AI agent for discussion and collaboration"
+stream0 agent start --name alice --description "Agent A"
+stream0 agent start --name bob --description "Agent B"
 ```
 
-This launches a Claude Code instance that connects to Stream0 and waits for tasks.
+### 3. Send a message from Alice to Bob
 
-### 3. Connect your Claude Code
+```bash
+curl -X POST http://localhost:8080/agents/bob/inbox \
+  -H "Content-Type: application/json" \
+  -d '{
+    "thread_id": "debate-1",
+    "from": "alice",
+    "type": "request",
+    "content": {"task": "Argue why Codex is better than Claude Code"}
+  }'
+```
 
-In a third terminal, `cd` into your project directory and run:
+### 4. Bob checks his inbox
+
+```bash
+curl "http://localhost:8080/agents/bob/inbox?status=unread&timeout=30"
+```
+
+Bob sees the request, does the work, and sends the result back:
+
+```bash
+curl -X POST http://localhost:8080/agents/alice/inbox \
+  -H "Content-Type: application/json" \
+  -d '{
+    "thread_id": "debate-1",
+    "from": "bob",
+    "type": "done",
+    "content": {"argument": "Codex is open source, supports any model, and..."}
+  }'
+```
+
+### 5. Alice reads the response
+
+```bash
+curl "http://localhost:8080/agents/alice/inbox?status=unread&thread_id=debate-1"
+```
+
+That's the core loop. Send a request, poll for the response. Any HTTP client can do this.
+
+## Integrations
+
+The Getting Started above uses curl. In practice, you want your agents to send and receive automatically. Stream0 supports any runtime that can make HTTP calls. Here's how to set up Claude Code.
+
+### Claude Code
+
+Stream0 provides a [channel plugin](https://docs.anthropic.com/en/docs/claude-code/channels) that automatically pushes incoming messages into your Claude Code session.
+
+> **Note:** Claude Code channels are in Anthropic's experimental research preview. The `--dangerously-load-development-channels` flag is required until channels are generally available.
+
+**Set up a listener:**
 
 ```bash
 cd ~/my-project
-stream0 connect
+stream0 init claude --name my-agent
 ```
 
-This writes a `.mcp.json` file in the current directory. When Claude Code starts in this directory, it picks up the config and connects to Stream0 automatically.
-
-### 4. Try it
-
-Start Claude Code in the same directory with the channel enabled:
+This writes a `.mcp.json` in the current directory. Then start Claude Code:
 
 ```bash
 claude --dangerously-load-development-channels server:stream0-channel
 ```
 
-Then tell it to talk to the other agent:
+Messages sent to `my-agent`'s inbox will now appear in the Claude Code session automatically. Claude Code can reply using the `reply` and `ack` tools provided by the channel.
+
+The channel also provides `discover` (list available agents) and `delegate` (send a task and wait for the result) tools, so you can say things like:
 
 ```
-You: ask agent-b to argue why Codex is better than Claude Code.
+You: ask bob to argue why Codex is better than Claude Code.
      then tell me why you disagree.
 ```
 
-Your agent sends the question to agent-b through Stream0, gets its argument back, and then gives you its own counterargument. Two AI agents, debating through Stream0, and you just asked one question.
+### Python
+
+Use the SDK to poll and send messages programmatically:
+
+```python
+from stream0 import Agent
+
+agent = Agent("my-agent", url="http://localhost:8080")
+agent.register()
+
+# Send a task
+agent.send("bob", thread_id="task-1", msg_type="request",
+           content={"task": "Review this code"})
+
+# Wait for response
+while True:
+    messages = agent.receive(status="unread", thread_id="task-1", timeout=30)
+    for msg in messages:
+        print(msg["content"])
+        agent.ack(msg["id"])
+        break
+```
 
 ## Message protocol
 
@@ -122,10 +148,10 @@ Each message has a `thread_id` (groups messages into a conversation) and a `type
 A typical exchange on one thread:
 
 ```
-primary → reviewer:  request  "Review this diff"
-reviewer → primary:  question "Is the timeout change intentional?"
-primary → reviewer:  answer   "Yes, increased to 30s for slow networks"
-reviewer → primary:  done     "LGTM with two style suggestions: ..."
+alice → bob:    request  "Review this diff"
+bob   → alice:  question "Is the timeout change intentional?"
+alice → bob:    answer   "Yes, increased to 30s for slow networks"
+bob   → alice:  done     "LGTM with two style suggestions: ..."
 ```
 
 ## API
