@@ -290,30 +290,48 @@ impl BhClient {
         Ok(())
     }
 
-    // --- Team ---
+    // --- Groups ---
 
-    pub async fn team_invite(&self, description: &str) -> Result<InviteResponse> {
+    pub async fn create_group(&self, name: &str) -> Result<crate::db::Group> {
         let req = self
             .client
-            .post(format!("{}/team/invite", self.base_url))
-            .json(&serde_json::json!({"description": description}));
+            .post(format!("{}/groups", self.base_url))
+            .json(&serde_json::json!({"name": name}));
         let resp = self.request(req).await?;
         Ok(resp.json().await?)
     }
 
-    pub async fn team_list(&self) -> Result<Vec<crate::db::ApiKey>> {
+    pub async fn list_groups(&self) -> Result<Vec<crate::db::Group>> {
         let req = self
             .client
-            .get(format!("{}/team", self.base_url));
+            .get(format!("{}/groups", self.base_url));
+        let resp = self.request(req).await?;
+        let body: serde_json::Value = resp.json().await?;
+        Ok(serde_json::from_value(body["groups"].clone()).unwrap_or_default())
+    }
+
+    pub async fn group_invite(&self, group: &str, description: &str) -> Result<InviteResponse> {
+        let req = self
+            .client
+            .post(format!("{}/groups/invite", self.base_url))
+            .json(&serde_json::json!({"group": group, "description": description}));
+        let resp = self.request(req).await?;
+        Ok(resp.json().await?)
+    }
+
+    pub async fn list_keys(&self) -> Result<Vec<crate::db::ApiKey>> {
+        let req = self
+            .client
+            .get(format!("{}/keys", self.base_url));
         let resp = self.request(req).await?;
         let body: KeysResponse = resp.json().await?;
         Ok(body.keys)
     }
 
-    pub async fn team_revoke(&self, key_prefix: &str) -> Result<()> {
+    pub async fn revoke_key(&self, key_prefix: &str) -> Result<()> {
         let req = self
             .client
-            .delete(format!("{}/team/{}", self.base_url, key_prefix));
+            .delete(format!("{}/keys/{}", self.base_url, key_prefix));
         self.request(req).await?;
         Ok(())
     }

@@ -57,7 +57,16 @@ pub struct Node {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKey {
     pub key_prefix: String,
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_name: Option<String>,
     pub description: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Group {
+    pub name: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -127,9 +136,15 @@ impl Database {
                 PRIMARY KEY (tenant, name)
             );
 
+            CREATE TABLE IF NOT EXISTS groups (
+                name TEXT NOT NULL PRIMARY KEY,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+
             CREATE TABLE IF NOT EXISTS api_keys (
-                tenant TEXT NOT NULL DEFAULT 'default',
                 key TEXT NOT NULL PRIMARY KEY,
+                role TEXT NOT NULL DEFAULT 'member',
+                group_name TEXT,
                 description TEXT NOT NULL DEFAULT '',
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             );
@@ -717,66 +732,99 @@ impl Database {
         Ok(messages)
     }
 
-    // --- API Keys ---
+    // --- Groups ---
 
-    pub fn create_api_key(&self, tenant: &str, description: &str) -> Result<ApiKey> {
+    pub fn create_group(&self, name: &str) -> Result<Group> {
         let conn = self.conn.lock().unwrap();
-        let key = format!("bh_{}", &Uuid::new_v4().to_string().replace('-', ""));
-
         conn.execute(
-            "INSERT INTO api_keys (tenant, key, description) VALUES (?1, ?2, ?3)",
-            params![tenant, key, description],
+            "INSERT INTO groups (name) VALUES (?1)",
+            params![name],
         )?;
-
         let ts: String = conn.query_row(
-            "SELECT created_at FROM api_keys WHERE key = ?1",
-            params![key],
+            "SELECT created_at FROM groups WHERE name = ?1",
+            params![name],
             |row| row.get(0),
         )?;
-
-        Ok(ApiKey {
-            key_prefix: key[..12].to_string(),
-            description: description.to_string(),
+        Ok(Group {
+            name: name.to_string(),
             created_at: Self::parse_ts(&ts),
         })
     }
 
-    /// Returns the full key (only on creation). Caller must show it to the user.
-    pub fn create_api_key_full(&self, tenant: &str, description: &str) -> Result<(String, ApiKey)> {
+    pub fn list_groups(&self) -> Result<Vec<Group>> {
         let conn = self.conn.lock().unwrap();
-        let key = format!("bh_{}", &Uuid::new_v4().to_string().replace('-', ""));
-
-        conn.execute(
-            "INSERT INTO api_keys (tenant, key, description) VALUES (?1, ?2, ?3)",
-            params![tenant, key, description],
-        )?;
-
-        let ts: String = conn.query_row(
-            "SELECT created_at FROM api_keys WHERE key = ?1",
-            params![key],
-            |row| row.get(0),
-        )?;
-
-        let api_key = ApiKey {
-            key_prefix: key[..12].to_string(),
-            description: description.to_string(),
-            created_at: Self::parse_ts(&ts),
-        };
-        Ok((key, api_key))
+        let mut stmt = conn.prepare("SELECT name, created_at FROM groups ORDER BY name ASC")?;
+        let groups = stmt
+            .query_map([], |row| {
+                let ts: String = row.get(1)?;
+                Ok(Group {
+                    name: row.get(0)?,
+                    created_at: Database::parse_ts(&ts),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(groups)
     }
 
-    pub fn list_api_keys(&self, tenant: &str) -> Result<Vec<ApiKey>> {
+    // --- API Keys ---
+
+    /// Create an admin key (server-level, no group).
+    pub fn create_admin_key(&self, description: &str) -> Result<String> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT key, description, created_at FROM api_keys WHERE tenant = ?1 ORDER BY created_at ASC",
+        let key = format!("bh_{}", &Uuid::new_v4().to_string().replace('-', ""));
+        conn.execute(
+            "INSERT INTO api_keys (key, role, group_name, description) VALUES (?1, 'admin', NULL, ?2)",
+            params![key, description],
         )?;
+        Ok(key)
+    }
+
+    /// Create a group key. Returns the full key.
+    pub fn create_group_key(&self, group_name: &str, description: &str) -> Result<String> {
+        let conn = self.conn.lock().unwrap();
+        // Verify group exists
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM groups WHERE name = ?1",
+                params![group_name],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)?;
+        if !exists {
+            anyhow::bail!("group '{}' not found", group_name);
+        }
+
+        let key = format!("bh_{}", &Uuid::new_v4().to_string().replace('-', ""));
+        conn.execute(
+            "INSERT INTO api_keys (key, role, group_name, description) VALUES (?1, 'member', ?2, ?3)",
+            params![key, group_name, description],
+        )?;
+        Ok(key)
+    }
+
+    pub fn list_api_keys(&self, group_name: Option<&str>) -> Result<Vec<ApiKey>> {
+        let conn = self.conn.lock().unwrap();
+        let (query, params_vec): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = match group_name {
+            Some(g) => (
+                "SELECT key, role, group_name, description, created_at FROM api_keys WHERE group_name = ?1 ORDER BY created_at ASC",
+                vec![Box::new(g.to_string())],
+            ),
+            None => (
+                "SELECT key, role, group_name, description, created_at FROM api_keys ORDER BY created_at ASC",
+                vec![],
+            ),
+        };
+        let mut stmt = conn.prepare(query)?;
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
         let keys = stmt
-            .query_map(params![tenant], |row| {
+            .query_map(params_ref.as_slice(), |row| {
                 let key: String = row.get(0)?;
-                let ts: String = row.get(2)?;
+                let ts: String = row.get(4)?;
                 Ok(ApiKey {
                     key_prefix: key[..std::cmp::min(12, key.len())].to_string(),
-                    description: row.get(1)?,
+                    role: row.get(1)?,
+                    group_name: row.get(2)?,
+                    description: row.get(3)?,
                     created_at: Database::parse_ts(&ts),
                 })
             })?
@@ -784,38 +832,49 @@ impl Database {
         Ok(keys)
     }
 
-    pub fn revoke_api_key(&self, tenant: &str, key_prefix: &str) -> Result<()> {
+    pub fn revoke_api_key(&self, key_prefix: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let deleted = conn.execute(
-            "DELETE FROM api_keys WHERE tenant = ?1 AND key LIKE ?2",
-            params![tenant, format!("{}%", key_prefix)],
+            "DELETE FROM api_keys WHERE key LIKE ?1 AND role != 'admin'",
+            params![format!("{}%", key_prefix)],
         )?;
         if deleted == 0 {
-            anyhow::bail!("API key not found");
+            anyhow::bail!("key not found (admin keys cannot be revoked this way)");
         }
         Ok(())
     }
 
-    /// Validate an API key. Returns the tenant if valid.
-    pub fn validate_api_key(&self, key: &str) -> Result<Option<String>> {
+    /// Validate an API key. Returns (role, group_name) if valid.
+    pub fn validate_api_key(&self, key: &str) -> Result<Option<(String, Option<String>)>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT tenant FROM api_keys WHERE key = ?1",
+            "SELECT role, group_name FROM api_keys WHERE key = ?1",
             params![key],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
         )
         .optional()
         .map_err(Into::into)
     }
 
-    /// Check if any API keys exist (for deciding whether to enforce auth).
-    pub fn has_api_keys(&self) -> bool {
+    /// Check if any admin keys exist.
+    pub fn has_admin_key(&self) -> bool {
         let conn = self.conn.lock().unwrap();
-        conn.query_row("SELECT COUNT(*) FROM api_keys", [], |row| {
-            row.get::<_, i64>(0)
-        })
+        conn.query_row(
+            "SELECT COUNT(*) FROM api_keys WHERE role = 'admin'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
         .map(|c| c > 0)
         .unwrap_or(false)
+    }
+
+    /// Bootstrap: create admin key if none exists. Returns the key if created.
+    pub fn bootstrap_admin_key(&self) -> Result<Option<String>> {
+        if self.has_admin_key() {
+            return Ok(None);
+        }
+        let key = self.create_admin_key("admin (auto-generated)")?;
+        Ok(Some(key))
     }
 }
 
@@ -1026,25 +1085,57 @@ mod tests {
     }
 
     #[test]
-    fn test_api_keys() {
+    fn test_bootstrap_admin_key() {
         let db = test_db();
-        let (full_key, key) = db
-            .create_api_key_full("default", "test key")
-            .unwrap();
-        assert!(full_key.starts_with("bh_"));
-        assert_eq!(key.description, "test key");
 
-        let keys = db.list_api_keys("default").unwrap();
-        assert_eq!(keys.len(), 1);
+        // First call creates admin key
+        let key = db.bootstrap_admin_key().unwrap();
+        assert!(key.is_some());
+        let admin_key = key.unwrap();
+        assert!(admin_key.starts_with("bh_"));
 
-        let tenant = db.validate_api_key(&full_key).unwrap();
-        assert_eq!(tenant, Some("default".to_string()));
+        // Second call returns None (already exists)
+        let key2 = db.bootstrap_admin_key().unwrap();
+        assert!(key2.is_none());
 
+        // Validate returns admin role
+        let result = db.validate_api_key(&admin_key).unwrap();
+        assert_eq!(result, Some(("admin".to_string(), None)));
+    }
+
+    #[test]
+    fn test_groups_and_keys() {
+        let db = test_db();
+
+        // Create group
+        db.create_group("frontend").unwrap();
+        let groups = db.list_groups().unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].name, "frontend");
+
+        // Create group key
+        let key = db.create_group_key("frontend", "alice").unwrap();
+        assert!(key.starts_with("bh_"));
+
+        // Validate returns member role + group
+        let result = db.validate_api_key(&key).unwrap();
+        assert_eq!(
+            result,
+            Some(("member".to_string(), Some("frontend".to_string())))
+        );
+
+        // Can't create key for nonexistent group
+        let bad = db.create_group_key("nonexistent", "x");
+        assert!(bad.is_err());
+
+        // Revoke
+        let prefix = &key[..12];
+        db.revoke_api_key(prefix).unwrap();
+        let keys = db.list_api_keys(Some("frontend")).unwrap();
+        assert_eq!(keys.len(), 0);
+
+        // Invalid key
         let invalid = db.validate_api_key("bh_invalid").unwrap();
         assert_eq!(invalid, None);
-
-        db.revoke_api_key("default", &key.key_prefix).unwrap();
-        let keys = db.list_api_keys("default").unwrap();
-        assert_eq!(keys.len(), 0);
     }
 }

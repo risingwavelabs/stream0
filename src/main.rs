@@ -46,10 +46,10 @@ enum Command {
         #[command(subcommand)]
         command: NodeCommand,
     },
-    /// Manage team API keys
-    Team {
+    /// Manage groups and API keys
+    Group {
         #[command(subcommand)]
-        command: TeamCommand,
+        command: GroupCommand,
     },
     /// Delegate a task to a worker
     Delegate {
@@ -123,20 +123,22 @@ enum NodeCommand {
 }
 
 #[derive(Subcommand)]
-enum TeamCommand {
-    /// Generate a new API key
+enum GroupCommand {
+    /// Create a new group (admin only)
+    Create { name: String },
+    /// List groups (admin only)
+    Ls,
+    /// Generate an API key for a group (admin only)
     Invite {
-        /// Description for the key
+        /// Group name
+        group: String,
         #[arg(long, default_value = "")]
         description: String,
     },
     /// List API keys
-    Ls,
-    /// Revoke an API key
-    Revoke {
-        /// Key prefix to revoke
-        key_prefix: String,
-    },
+    Keys,
+    /// Revoke an API key (admin only)
+    Revoke { key_prefix: String },
 }
 
 fn make_client(cfg: &config::CliConfig) -> client::BhClient {
@@ -210,10 +212,14 @@ async fn main() {
             NodeCommand::Ls => cmd_node_ls().await,
         },
 
-        Command::Team { command } => match command {
-            TeamCommand::Invite { description } => cmd_team_invite(&description).await,
-            TeamCommand::Ls => cmd_team_ls().await,
-            TeamCommand::Revoke { key_prefix } => cmd_team_revoke(&key_prefix).await,
+        Command::Group { command } => match command {
+            GroupCommand::Create { name } => cmd_group_create(&name).await,
+            GroupCommand::Ls => cmd_group_ls().await,
+            GroupCommand::Invite { group, description } => {
+                cmd_group_invite(&group, &description).await
+            }
+            GroupCommand::Keys => cmd_group_keys().await,
+            GroupCommand::Revoke { key_prefix } => cmd_group_revoke(&key_prefix).await,
         },
 
         Command::Delegate { worker, task } => {
@@ -530,15 +536,53 @@ async fn cmd_node_ls() {
 
 // --- Team commands ---
 
-async fn cmd_team_invite(description: &str) {
+async fn cmd_group_create(name: &str) {
     let cfg = config::CliConfig::load();
     let client = make_client(&cfg);
 
-    match client.team_invite(description).await {
+    match client.create_group(name).await {
+        Ok(group) => println!("Group \"{}\" created.", group.name),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn cmd_group_ls() {
+    let cfg = config::CliConfig::load();
+    let client = make_client(&cfg);
+
+    match client.list_groups().await {
+        Ok(groups) => {
+            if groups.is_empty() {
+                println!("No groups.");
+            } else {
+                println!("{:<20} {}", "NAME", "CREATED");
+                for g in groups {
+                    println!(
+                        "{:<20} {}",
+                        g.name,
+                        g.created_at.format("%Y-%m-%d %H:%M:%S")
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn cmd_group_invite(group: &str, description: &str) {
+    let cfg = config::CliConfig::load();
+    let client = make_client(&cfg);
+
+    match client.group_invite(group, description).await {
         Ok(resp) => {
-            println!("API key created:");
+            println!("API key created for group \"{}\":", resp.key_prefix);
             println!("  Key: {}", resp.key);
-            println!("  Prefix: {}", resp.key_prefix);
             println!("\nSave this key — it won't be shown again.");
         }
         Err(e) => {
@@ -548,20 +592,25 @@ async fn cmd_team_invite(description: &str) {
     }
 }
 
-async fn cmd_team_ls() {
+async fn cmd_group_keys() {
     let cfg = config::CliConfig::load();
     let client = make_client(&cfg);
 
-    match client.team_list().await {
+    match client.list_keys().await {
         Ok(keys) => {
             if keys.is_empty() {
-                println!("No API keys. Auth is disabled (open access).");
+                println!("No API keys.");
             } else {
-                println!("{:<15} {:<30} {}", "PREFIX", "DESCRIPTION", "CREATED");
+                println!(
+                    "{:<15} {:<10} {:<15} {:<20} {}",
+                    "PREFIX", "ROLE", "GROUP", "DESCRIPTION", "CREATED"
+                );
                 for k in keys {
                     println!(
-                        "{:<15} {:<30} {}",
+                        "{:<15} {:<10} {:<15} {:<20} {}",
                         k.key_prefix,
+                        k.role,
+                        k.group_name.as_deref().unwrap_or("-"),
                         k.description,
                         k.created_at.format("%Y-%m-%d %H:%M:%S")
                     );
@@ -575,11 +624,11 @@ async fn cmd_team_ls() {
     }
 }
 
-async fn cmd_team_revoke(key_prefix: &str) {
+async fn cmd_group_revoke(key_prefix: &str) {
     let cfg = config::CliConfig::load();
     let client = make_client(&cfg);
 
-    match client.team_revoke(key_prefix).await {
+    match client.revoke_key(key_prefix).await {
         Ok(()) => println!("Key revoked."),
         Err(e) => {
             eprintln!("Error: {}", e);

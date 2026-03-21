@@ -18,9 +18,12 @@ use crate::db::Database;
 // --- Tenant ---
 
 #[derive(Clone)]
-pub struct Tenant {
-    pub name: String,
-    /// API key prefix identifying who made the request. Empty if no auth.
+pub struct Caller {
+    /// "admin" or "member"
+    pub role: String,
+    /// Group name. Admin callers set this to the requested group.
+    pub group: String,
+    /// API key prefix identifying who made the request.
     pub key_prefix: String,
 }
 
@@ -79,7 +82,13 @@ struct RegisterNodeRequest {
 }
 
 #[derive(Deserialize)]
-struct TeamInviteRequest {
+struct CreateGroupRequest {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct GroupInviteRequest {
+    group: String,
     #[serde(default)]
     description: Option<String>,
 }
@@ -92,14 +101,6 @@ async fn auth_middleware(
     mut request: axum::extract::Request,
     next: Next,
 ) -> impl IntoResponse {
-    if !state.db.has_api_keys() {
-        request.extensions_mut().insert(Tenant {
-            name: "default".to_string(),
-            key_prefix: String::new(),
-        });
-        return next.run(request).await;
-    }
-
     let key = headers
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
@@ -114,10 +115,13 @@ async fn auth_middleware(
     }
 
     match state.db.validate_api_key(key) {
-        Ok(Some(tenant_name)) => {
+        Ok(Some((role, group_name))) => {
             let prefix = key[..std::cmp::min(12, key.len())].to_string();
-            request.extensions_mut().insert(Tenant {
-                name: tenant_name,
+            // Admin keys default to "default" group; group keys use their group
+            let group = group_name.unwrap_or_else(|| "default".to_string());
+            request.extensions_mut().insert(Caller {
+                role,
+                group,
                 key_prefix: prefix,
             });
             next.run(request).await
@@ -143,9 +147,9 @@ async fn health_handler() -> Json<serde_json::Value> {
 
 async fn list_agents_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
 ) -> impl IntoResponse {
-    match state.db.list_agents(&tenant.name) {
+    match state.db.list_agents(&caller.group) {
         Ok(agents) => (StatusCode::OK, Json(serde_json::json!({"agents": agents}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -153,12 +157,12 @@ async fn list_agents_handler(
 
 async fn register_agent_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Json(req): Json<RegisterAgentRequest>,
 ) -> impl IntoResponse {
     match state
         .db
-        .register_agent(&tenant.name, &req.id, req.aliases.as_deref())
+        .register_agent(&caller.group, &req.id, req.aliases.as_deref())
     {
         Ok(agent) => (
             StatusCode::CREATED,
@@ -171,10 +175,10 @@ async fn register_agent_handler(
 
 async fn delete_agent_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Path(agent_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.delete_agent(&tenant.name, &agent_id) {
+    match state.db.delete_agent(&caller.group, &agent_id) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "deleted", "agent_id": agent_id})),
@@ -188,11 +192,11 @@ async fn delete_agent_handler(
 
 async fn send_inbox_message_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Path(agent_id): Path<String>,
     Json(req): Json<SendInboxRequest>,
 ) -> impl IntoResponse {
-    let resolved_id = match state.db.resolve_agent(&tenant.name, &agent_id) {
+    let resolved_id = match state.db.resolve_agent(&caller.group, &agent_id) {
         Ok(Some(id)) => id,
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "agent not found"),
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
@@ -207,7 +211,7 @@ async fn send_inbox_message_handler(
     }
 
     match state.db.send_inbox_message(
-        &tenant.name,
+        &caller.group,
         &req.thread_id,
         &req.from,
         &resolved_id,
@@ -228,24 +232,24 @@ async fn send_inbox_message_handler(
 
 async fn get_inbox_messages_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Path(agent_id): Path<String>,
     Query(params): Query<InboxQuery>,
 ) -> impl IntoResponse {
-    let resolved_id = match state.db.resolve_agent(&tenant.name, &agent_id) {
+    let resolved_id = match state.db.resolve_agent(&caller.group, &agent_id) {
         Ok(Some(id)) => id,
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "agent not found"),
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
 
-    let _ = state.db.update_last_seen(&tenant.name, &resolved_id);
+    let _ = state.db.update_last_seen(&caller.group, &resolved_id);
 
     let timeout = params.timeout.unwrap_or(0.0).clamp(0.0, 30.0);
     let start = std::time::Instant::now();
 
     loop {
         match state.db.get_inbox_messages(
-            &tenant.name,
+            &caller.group,
             &resolved_id,
             params.status.as_deref(),
             params.thread_id.as_deref(),
@@ -277,10 +281,10 @@ async fn get_inbox_messages_handler(
 
 async fn ack_inbox_message_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Path(message_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.ack_inbox_message(&tenant.name, &message_id) {
+    match state.db.ack_inbox_message(&caller.group, &message_id) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "acked", "message_id": message_id})),
@@ -292,10 +296,10 @@ async fn ack_inbox_message_handler(
 
 async fn get_thread_messages_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Path(thread_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.get_thread_messages(&tenant.name, &thread_id) {
+    match state.db.get_thread_messages(&caller.group, &thread_id) {
         Ok(messages) => (
             StatusCode::OK,
             Json(serde_json::json!({"messages": messages})),
@@ -309,12 +313,12 @@ async fn get_thread_messages_handler(
 
 async fn register_worker_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Json(req): Json<RegisterWorkerRequest>,
 ) -> impl IntoResponse {
     match state
         .db
-        .register_worker(&tenant.name, &req.name, &req.instructions, &req.node_id, &tenant.key_prefix)
+        .register_worker(&caller.group, &req.name, &req.instructions, &req.node_id, &caller.key_prefix)
     {
         Ok(worker) => (
             StatusCode::CREATED,
@@ -327,9 +331,9 @@ async fn register_worker_handler(
 
 async fn list_workers_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
 ) -> impl IntoResponse {
-    match state.db.list_workers(&tenant.name) {
+    match state.db.list_workers(&caller.group) {
         Ok(workers) => (
             StatusCode::OK,
             Json(serde_json::json!({"workers": workers})),
@@ -341,10 +345,10 @@ async fn list_workers_handler(
 
 async fn get_worker_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.get_worker(&tenant.name, &name) {
+    match state.db.get_worker(&caller.group, &name) {
         Ok(Some(worker)) => {
             (StatusCode::OK, Json(serde_json::to_value(worker).unwrap())).into_response()
         }
@@ -355,10 +359,10 @@ async fn get_worker_handler(
 
 async fn remove_worker_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.remove_worker(&tenant.name, &name, &tenant.key_prefix) {
+    match state.db.remove_worker(&caller.group, &name, &caller.key_prefix) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "removed", "worker": name})),
@@ -375,13 +379,13 @@ struct UpdateWorkerRequest {
 
 async fn update_worker_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Path(name): Path<String>,
     Json(req): Json<UpdateWorkerRequest>,
 ) -> impl IntoResponse {
     match state
         .db
-        .update_worker_instructions(&tenant.name, &name, &req.instructions, &tenant.key_prefix)
+        .update_worker_instructions(&caller.group, &name, &req.instructions, &caller.key_prefix)
     {
         Ok(()) => (
             StatusCode::OK,
@@ -394,12 +398,12 @@ async fn update_worker_handler(
 
 async fn stop_worker_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
     match state
         .db
-        .set_worker_status(&tenant.name, &name, "stopped", &tenant.key_prefix)
+        .set_worker_status(&caller.group, &name, "stopped", &caller.key_prefix)
     {
         Ok(()) => (
             StatusCode::OK,
@@ -412,12 +416,12 @@ async fn stop_worker_handler(
 
 async fn start_worker_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
     match state
         .db
-        .set_worker_status(&tenant.name, &name, "active", &tenant.key_prefix)
+        .set_worker_status(&caller.group, &name, "active", &caller.key_prefix)
     {
         Ok(()) => (
             StatusCode::OK,
@@ -430,10 +434,10 @@ async fn start_worker_handler(
 
 async fn worker_logs_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.get_worker_logs(&tenant.name, &name, 20) {
+    match state.db.get_worker_logs(&caller.group, &name, 20) {
         Ok(messages) => (
             StatusCode::OK,
             Json(serde_json::json!({"messages": messages})),
@@ -447,10 +451,10 @@ async fn worker_logs_handler(
 
 async fn register_node_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Json(req): Json<RegisterNodeRequest>,
 ) -> impl IntoResponse {
-    match state.db.register_node(&tenant.name, &req.id) {
+    match state.db.register_node(&caller.group, &req.id) {
         Ok(node) => (
             StatusCode::CREATED,
             Json(serde_json::to_value(node).unwrap()),
@@ -462,9 +466,9 @@ async fn register_node_handler(
 
 async fn list_nodes_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
 ) -> impl IntoResponse {
-    match state.db.list_nodes(&tenant.name) {
+    match state.db.list_nodes(&caller.group) {
         Ok(nodes) => (StatusCode::OK, Json(serde_json::json!({"nodes": nodes}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -472,10 +476,10 @@ async fn list_nodes_handler(
 
 async fn remove_node_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Path(node_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.remove_node(&tenant.name, &node_id) {
+    match state.db.remove_node(&caller.group, &node_id) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "removed", "node": node_id})),
@@ -487,10 +491,10 @@ async fn remove_node_handler(
 
 async fn heartbeat_node_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Path(node_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.heartbeat_node(&tenant.name, &node_id) {
+    match state.db.heartbeat_node(&caller.group, &node_id) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "ok"})),
@@ -500,44 +504,94 @@ async fn heartbeat_node_handler(
     }
 }
 
-// --- Handlers: Team ---
+// --- Handlers: Groups ---
 
-async fn team_invite_handler(
+async fn create_group_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
-    Json(req): Json<TeamInviteRequest>,
+    Extension(caller): Extension<Caller>,
+    Json(req): Json<CreateGroupRequest>,
 ) -> impl IntoResponse {
-    let desc = req.description.unwrap_or_default();
-    match state.db.create_api_key_full(&tenant.name, &desc) {
-        Ok((full_key, info)) => (
+    if caller.role != "admin" {
+        return error_response(StatusCode::FORBIDDEN, "admin key required");
+    }
+    match state.db.create_group(&req.name) {
+        Ok(group) => (
             StatusCode::CREATED,
-            Json(serde_json::json!({
-                "key": full_key,
-                "key_prefix": info.key_prefix,
-                "description": info.description,
-            })),
+            Json(serde_json::to_value(group).unwrap()),
         )
             .into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-async fn team_list_handler(
+async fn list_groups_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
 ) -> impl IntoResponse {
-    match state.db.list_api_keys(&tenant.name) {
+    if caller.role != "admin" {
+        return error_response(StatusCode::FORBIDDEN, "admin key required");
+    }
+    match state.db.list_groups() {
+        Ok(groups) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"groups": groups})),
+        )
+            .into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+async fn group_invite_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+    Json(req): Json<GroupInviteRequest>,
+) -> impl IntoResponse {
+    if caller.role != "admin" {
+        return error_response(StatusCode::FORBIDDEN, "admin key required");
+    }
+    let desc = req.description.unwrap_or_default();
+    match state.db.create_group_key(&req.group, &desc) {
+        Ok(full_key) => {
+            let prefix = full_key[..std::cmp::min(12, full_key.len())].to_string();
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({
+                    "key": full_key,
+                    "key_prefix": prefix,
+                    "group": req.group,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
+    }
+}
+
+async fn list_keys_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+) -> impl IntoResponse {
+    // Admin sees all keys; member sees own group's keys
+    let filter = if caller.role == "admin" {
+        None
+    } else {
+        Some(caller.group.as_str())
+    };
+    match state.db.list_api_keys(filter) {
         Ok(keys) => (StatusCode::OK, Json(serde_json::json!({"keys": keys}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-async fn team_revoke_handler(
+async fn revoke_key_handler(
     State(state): State<SharedState>,
-    Extension(tenant): Extension<Tenant>,
+    Extension(caller): Extension<Caller>,
     Path(key_prefix): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.revoke_api_key(&tenant.name, &key_prefix) {
+    if caller.role != "admin" {
+        return error_response(StatusCode::FORBIDDEN, "admin key required");
+    }
+    match state.db.revoke_api_key(&key_prefix) {
         Ok(()) => (
             StatusCode::OK,
             Json(serde_json::json!({"status": "revoked"})),
@@ -557,6 +611,18 @@ fn error_response(status: StatusCode, message: &str) -> axum::response::Response
 
 pub async fn run(config: ServerConfig) {
     let db = Database::new(&config.db_path).expect("failed to initialize database");
+
+    // Bootstrap admin key on first start
+    match db.bootstrap_admin_key() {
+        Ok(Some(key)) => {
+            tracing::info!("Admin key generated (first start)");
+            println!("\n  Admin key: {}\n", key);
+            println!("  Save this key. Use it to login:");
+            println!("  bh login http://{}:{} --key {}\n", config.host, config.port, key);
+        }
+        Ok(None) => {}
+        Err(e) => tracing::error!("Failed to bootstrap admin key: {}", e),
+    }
 
     // Auto-register "local" node
     let _ = db.register_node("default", "local");
@@ -609,10 +675,12 @@ pub async fn run(config: ServerConfig) {
         .route("/nodes", get(list_nodes_handler).post(register_node_handler))
         .route("/nodes/{node_id}", delete(remove_node_handler))
         .route("/nodes/{node_id}/heartbeat", post(heartbeat_node_handler))
-        // Team
-        .route("/team", get(team_list_handler))
-        .route("/team/invite", post(team_invite_handler))
-        .route("/team/{key_prefix}", delete(team_revoke_handler))
+        // Groups
+        .route("/groups", get(list_groups_handler).post(create_group_handler))
+        .route("/groups/invite", post(group_invite_handler))
+        // Keys
+        .route("/keys", get(list_keys_handler))
+        .route("/keys/{key_prefix}", delete(revoke_key_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
     let app = Router::new()
