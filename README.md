@@ -77,15 +77,28 @@ This registers the agent on Stream0 and launches a Claude Code instance that lis
 
 ### 3. Connect your Claude Code
 
+In a third terminal, `cd` into your project directory and run:
+
 ```bash
+cd ~/my-project
 stream0 connect
 ```
 
-This writes the MCP config so your Claude Code can discover and talk to other agents through Stream0.
+This writes a `.mcp.json` file in the current directory. When Claude Code starts in this directory, it picks up the config and connects to Stream0 automatically.
 
 ### 4. Use it
 
-Open Claude Code and ask it to collaborate with other agents. It will discover who's available, send the task, and bring the result back.
+Start Claude Code in the same directory:
+
+```bash
+claude
+```
+
+Then ask it to work with other agents:
+
+```
+You: ask the reviewer to look at my latest changes
+```
 
 ## Message protocol
 
