@@ -20,9 +20,9 @@ Agent A                   Stream0              Agent B
 
 ## Getting started
 
-This walkthrough uses Claude Code, but Stream0 works with any agent. See the [API](#api) section if you're using a different runtime.
+This walkthrough uses Claude Code. Stream0 itself is runtime-agnostic (see [API](#api)), but Claude Code is the easiest way to see it in action.
 
-> **Note:** The Claude Code integration uses the [channel](https://docs.anthropic.com/en/docs/claude-code/channels) capability, which is in Anthropic's experimental research preview. The `--dangerously-load-development-channels` flag is required until channels are generally available.
+> **Note:** The Claude Code integration uses the [channel](https://docs.anthropic.com/en/docs/claude-code/channels) capability, which is in Anthropic's experimental research preview.
 
 ### 1. Install and start the server
 
@@ -31,22 +31,18 @@ curl -fsSL https://stream0.dev/install.sh | sh
 stream0
 ```
 
-### 2. Register and set up a second agent
+### 2. Start a second agent
 
-In a second terminal, register an agent and set up Claude Code to listen for tasks:
+In a second terminal:
 
 ```bash
-stream0 agent start --name agent-b --description "A second AI agent"
-cd ~/any-project
-stream0 init claude --name agent-b
+stream0 init claude --name agent-b --description "A second AI agent"
 claude --dangerously-load-development-channels server:stream0-channel
 ```
 
-This starts a Claude Code instance that automatically receives tasks through Stream0.
+### 3. Start your Claude Code
 
-### 3. Set up your own Claude Code
-
-In a third terminal, set up your Claude Code the same way:
+In a third terminal:
 
 ```bash
 cd ~/my-project
@@ -56,14 +52,12 @@ claude --dangerously-load-development-channels server:stream0-channel
 
 ### 4. Try it
 
-In your Claude Code session, tell it to talk to the other agent:
-
 ```
 You: ask agent-b to argue why Codex is better than Claude Code.
      then tell me why you disagree.
 ```
 
-Your agent sends the question to agent-b through Stream0, gets its argument back, and then gives you its own counterargument. Two AI agents, debating through Stream0, and you just asked one question.
+Your agent sends the question to agent-b through Stream0, gets its argument back, and gives you its counterargument. Two AI agents debating, and you just asked one question.
 
 ## Other integrations
 

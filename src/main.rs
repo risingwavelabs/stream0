@@ -92,6 +92,9 @@ enum InitRuntime {
         /// Agent name for this Claude Code instance
         #[arg(long)]
         name: String,
+        /// What this agent does
+        #[arg(long, default_value = "")]
+        description: String,
         /// Stream0 server URL
         #[arg(long, default_value = "http://localhost:8080")]
         url: String,
@@ -676,8 +679,27 @@ async fn cmd_agent_start(name: &str, description: &str, url: &str) {
     println!("  stream0 init claude --name {} --url {}", name, url);
 }
 
-async fn cmd_init_claude(name: &str, url: &str) {
+async fn cmd_init_claude(name: &str, description: &str, url: &str) {
     let api_key = std::env::var("STREAM0_API_KEY").unwrap_or_default();
+
+    // Register agent on Stream0
+    let client = reqwest::Client::new();
+    let mut body = serde_json::json!({"id": name});
+    if !description.is_empty() {
+        body["description"] = serde_json::Value::String(description.to_string());
+    }
+    let mut req = client.post(format!("{}/agents", url)).json(&body);
+    if !api_key.is_empty() {
+        req = req.header("X-API-Key", &api_key);
+    }
+    match req.send().await {
+        Ok(resp) if resp.status().is_success() => {
+            println!("Agent \"{}\" registered on {}", name, url);
+        }
+        Ok(_) | Err(_) => {
+            eprintln!("Warning: could not register agent on {} (is the server running?)", url);
+        }
+    }
 
     // Write .mcp.json
     let mcp_file = std::path::Path::new(".mcp.json");
@@ -699,10 +721,8 @@ async fn cmd_init_claude(name: &str, url: &str) {
         let content = std::fs::read_to_string(mcp_file).unwrap_or_default();
         if content.contains("stream0-channel") {
             println!("stream0-channel already configured in .mcp.json");
-            println!();
         } else {
-            eprintln!("Warning: .mcp.json already exists.");
-            eprintln!("Add this to your mcpServers:");
+            eprintln!("Warning: .mcp.json already exists. Add this to your mcpServers:");
             eprintln!();
             let inner = serde_json::json!({
                 "command": "npx",
@@ -720,14 +740,11 @@ async fn cmd_init_claude(name: &str, url: &str) {
         std::fs::write(mcp_file, serde_json::to_string_pretty(&mcp_config).unwrap())
             .expect("failed to write .mcp.json");
         println!("Wrote .mcp.json");
-        println!();
     }
 
-    println!("Start Claude Code with:");
-    println!("  claude --dangerously-load-development-channels server:stream0-channel");
     println!();
-    println!("Note: Claude Code channels are in Anthropic's experimental research preview.");
-    println!("      --dangerously-skip-permissions is recommended for worker agents.");
+    println!("Now run:");
+    println!("  claude --dangerously-load-development-channels server:stream0-channel");
 }
 
 async fn cmd_status(url: &str) {
@@ -795,8 +812,8 @@ async fn main() {
         Some(Command::Agent { action: AgentAction::Start { name, description, url } }) => {
             cmd_agent_start(&name, &description, &url).await;
         }
-        Some(Command::Init { runtime: InitRuntime::Claude { name, url } }) => {
-            cmd_init_claude(&name, &url).await;
+        Some(Command::Init { runtime: InitRuntime::Claude { name, description, url } }) => {
+            cmd_init_claude(&name, &description, &url).await;
         }
         Some(Command::Status { url }) => {
             cmd_status(&url).await;
