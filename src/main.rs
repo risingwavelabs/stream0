@@ -247,7 +247,7 @@ async fn auth_middleware(
 async fn health_handler() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "healthy",
-        "version": "0.3.1"
+        "version": "0.3.2"
     }))
 }
 
