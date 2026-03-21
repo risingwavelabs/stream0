@@ -25,3 +25,4 @@ __pycache__/
 .pytest_cache/
 dist/
 build/
+packages/stream0-channel/node_modules/

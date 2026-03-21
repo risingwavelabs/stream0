@@ -1,0 +1,17 @@
+{
+  "name": "stream0-channel",
+  "version": "0.2.1",
+  "description": "Stream0 MCP channel for Claude Code",
+  "bin": {
+    "stream0-channel": "bin/stream0-channel.mjs"
+  },
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/risingwavelabs/stream0.git"
+  }
+}

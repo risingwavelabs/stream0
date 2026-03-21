@@ -619,24 +619,20 @@ fn error_response(status: StatusCode, message: &str) -> axum::response::Response
 
 // --- CLI subcommands ---
 
-fn find_mcp_channel_path() -> String {
-    // Look for stream0-channel.ts relative to the executable
-    let exe = std::env::current_exe().unwrap_or_default();
-    let exe_dir = exe.parent().unwrap_or(std::path::Path::new("."));
-
-    // Check common locations
-    for candidate in &[
-        exe_dir.join("../mcp/stream0-channel.ts"),
-        exe_dir.join("mcp/stream0-channel.ts"),
-        std::path::PathBuf::from("./mcp/stream0-channel.ts"),
-    ] {
-        if candidate.exists() {
-            return candidate.canonicalize().unwrap_or(candidate.clone()).to_string_lossy().to_string();
+fn mcp_config_json(url: &str, api_key: &str, agent_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "mcpServers": {
+            "stream0-channel": {
+                "command": "npx",
+                "args": ["stream0-channel"],
+                "env": {
+                    "STREAM0_URL": url,
+                    "STREAM0_API_KEY": api_key,
+                    "STREAM0_AGENT_ID": agent_id
+                }
+            }
         }
-    }
-
-    // Fallback: assume it's alongside the binary
-    "./mcp/stream0-channel.ts".to_string()
+    })
 }
 
 async fn cmd_agent_start(name: &str, description: &str, url: &str) {
@@ -676,24 +672,11 @@ async fn cmd_agent_start(name: &str, description: &str, url: &str) {
     }
 
     // Create temporary MCP config
-    let mcp_channel_path = find_mcp_channel_path();
     let tmp_dir = std::env::temp_dir().join(format!("stream0-agent-{}", name));
     std::fs::create_dir_all(&tmp_dir).expect("failed to create temp dir");
     let mcp_config_path = tmp_dir.join("mcp.json");
 
-    let mcp_config = serde_json::json!({
-        "mcpServers": {
-            "stream0-channel": {
-                "command": "bun",
-                "args": [mcp_channel_path],
-                "env": {
-                    "STREAM0_URL": url,
-                    "STREAM0_API_KEY": api_key,
-                    "STREAM0_AGENT_ID": name
-                }
-            }
-        }
-    });
+    let mcp_config = mcp_config_json(url, &api_key, name);
     std::fs::write(&mcp_config_path, serde_json::to_string_pretty(&mcp_config).unwrap())
         .expect("failed to write MCP config");
 
@@ -756,7 +739,6 @@ async fn cmd_connect(url: &str, name: Option<&str>) {
     }
     let _ = req.send().await;
 
-    let mcp_channel_path = find_mcp_channel_path();
     let mcp_file = std::path::Path::new(".mcp.json");
 
     if mcp_file.exists() {
@@ -766,8 +748,8 @@ async fn cmd_connect(url: &str, name: Option<&str>) {
         } else {
             println!("Warning: .mcp.json exists. Add this to your mcpServers:\n");
             println!("  \"stream0-channel\": {{");
-            println!("    \"command\": \"bun\",");
-            println!("    \"args\": [\"{}\"],", mcp_channel_path);
+            println!("    \"command\": \"npx\",");
+            println!("    \"args\": [\"stream0-channel\"],");
             println!("    \"env\": {{");
             println!("      \"STREAM0_URL\": \"{}\",", url);
             println!("      \"STREAM0_API_KEY\": \"{}\",", api_key);
@@ -777,19 +759,7 @@ async fn cmd_connect(url: &str, name: Option<&str>) {
             return;
         }
     } else {
-        let config = serde_json::json!({
-            "mcpServers": {
-                "stream0-channel": {
-                    "command": "bun",
-                    "args": [mcp_channel_path],
-                    "env": {
-                        "STREAM0_URL": url,
-                        "STREAM0_API_KEY": api_key,
-                        "STREAM0_AGENT_ID": agent_id
-                    }
-                }
-            }
-        });
+        let config = mcp_config_json(url, &api_key, &agent_id);
         std::fs::write(mcp_file, serde_json::to_string_pretty(&config).unwrap())
             .expect("failed to write .mcp.json");
         println!("Stream0 connected to Claude Code");
