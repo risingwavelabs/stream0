@@ -1,268 +1,176 @@
 # Stream0
 
-Stream0 is a messaging layer for agents.
+Make your AI agents work together. You talk to one agent — it coordinates the rest.
 
-It gives each agent an inbox and a thread-based message history, so one agent can delegate work to other agents, continue the discussion on the same task thread, and gather results back into one place.
+## The Problem
 
-## What Is Stream0?
+You're using Claude Code (or Cursor, or Codex). You're writing code. You want a second opinion — a code review, a security audit, a design critique. Today, you have to:
 
-Stream0 is not a model, and it is not an agent runtime. It is the transport layer behind multi-agent workflows.
+1. Copy your code into a second chat
+2. Wait for feedback
+3. Go back to your first chat
+4. Apply the feedback manually
+5. Repeat
 
-Use it when one agent needs to work with other agents on the same task:
+That breaks your flow. You're doing the coordination work that your agent should be doing for you.
 
-- delegate subtasks
-- split work across specialists
-- discuss an intermediate result
-- ask follow-up questions
-- collect final outcomes on one thread
+## The Fix
 
-## What Problem Does It Solve?
+With Stream0, you stay in one terminal and say:
 
-Calling another program over HTTP is easy. Coordinating work across multiple agents is harder.
-
-Once more than one agent is involved in the same task, the coordination itself becomes a problem:
-
-- one agent needs to hand work to another
-- one task needs to be split across multiple agents
-- a worker may need clarification before it can continue
-- intermediate discussion needs to stay attached to the task
-- results need to come back to the original requester
-- the whole exchange needs a clear terminal state
-
-Stream0 keeps that workflow simple:
-
-- each agent has an inbox
-- each task has a `thread_id`
-- messages stay attached to that thread
-- the task progresses through typed messages such as `request`, `question`, `answer`, `done`, and `failed`
-
-The point is not just to move one message. The point is to keep one task moving until it is finished.
-
-## A Concrete Example
-
-The simplest useful mental model is:
-
-- a user talks to one primary agent
-- that primary agent uses Stream0 behind the scenes
-- specialist agents do part of the work and report back
-- the user gets one final result
-
-For example:
-
-- the user asks a primary agent to write a recommendation memo
-- the primary agent asks a research worker for market context
-- the primary agent asks a critic worker to challenge the positioning
-- the critic worker asks a clarification question
-- the primary agent answers
-- both workers return results
-- the primary agent gives one final recommendation back to the user
-
-The flow looks like this:
-
-```text
-User → primary-agent           : "Write a recommendation memo"
-primary-agent → research-worker: request
-primary-agent → critic-worker  : request
-critic-worker → primary-agent  : question
-primary-agent → critic-worker  : answer
-research-worker → primary-agent: done
-critic-worker → primary-agent  : done
-primary-agent → User           : final result
+```
+You: find someone to review the changes I just made
 ```
 
-That is the core Stream0 pattern: the user talks to one agent, and that agent coordinates other agents automatically through a shared task thread.
+Your agent finds a reviewer, sends the code, waits for feedback, and brings it back:
 
-## Typical Use Cases
+```
+Claude Code: I found "reviewer" online. Sending your changes for review...
 
-- **Delegation**: one agent hands a task to another and waits for the result
-- **Parallel subtasks**: one agent fans work out to multiple specialist agents and gathers outputs
-- **Discussion**: agents compare alternatives or challenge assumptions before proceeding
-- **Clarification loops**: a worker asks follow-up questions on the same task thread
-- **Interactive + background coordination**: an interactive agent stays in the loop while background workers handle longer-running work
+             reviewer responded:
 
-## What Stream0 Provides
+             1. src/handler.rs:42 — The timeout error case is unhandled.
+                This will panic instead of returning a 504.
 
-- agent addressing
-- inbox persistence
-- thread-scoped task history
-- typed task-state messages
+             2. src/handler.rs:67 — `process()` is too generic.
+                Rename to `validate_input()`.
 
-## What Stream0 Does Not Provide
+             Want me to apply these suggestions?
 
-Stream0 is not an orchestration engine and not an execution runtime.
+You: yes fix both
+```
 
-It does not:
+Done. You never left your terminal.
 
-- execute your model
-- decide which agents to call
-- schedule your worker
-- manage tools or memory
-- replace direct RPC for simple synchronous calls
+## What's Happening Under the Hood
 
-Those decisions still belong to your primary agent or your application logic. Stream0 provides the messaging primitives underneath.
+```
+Your terminal              Stream0              Reviewer agent
+     |                        |                       |
+     |  "review my code"      |                       |
+     |  ──────────────>       |                       |
+     |  agent discovers       |                       |
+     |  reviewer online       |                       |
+     |  ──────────────> stores in reviewer's inbox     |
+     |                        |  ──────────────>       |
+     |                        |  reviewer does work    |
+     |                        |  <──────────────       |
+     |  result comes back     |                       |
+     |  <──────────────       |                       |
+     |                        |                       |
+```
 
-## Inbox Is Not Execution
+Stream0 is the messaging layer between agents. Each agent gets an inbox. Messages are grouped by task thread. Your agent talks to other agents through Stream0 — you just talk to your agent.
 
-Registering an agent in Stream0 gives it an inbox. It does not automatically make that agent run.
+## Use Cases
 
-To process messages automatically, you still need an activation mechanism:
+**Code review** — "ask the reviewer to look at my diff"
 
-- a polling worker loop
-- a webhook
-- a [Channel integration](docs/tutorial-channel.md)
-- an external scheduler
+**Parallel work** — "have the reviewer and the architect both look at this PR"
 
-This is intentional. Stream0 handles message delivery and thread history. Your agents still decide when and how to act.
+**Security audit** — "ask the security-auditor to check this for vulnerabilities"
 
-## Quick Start
+**Design discussion** — "work with the data team's agent to design the new schema"
 
-### Start Stream0
+**Task delegation** — "send this to the research agent and come back when it's done"
+
+Your agent discovers who's available, picks the right one, sends the task, handles follow-up questions, and brings the result back to you.
+
+## Demo: Try It in 60 Seconds
+
+### 1. Start Stream0
 
 ```bash
 cargo build --release
-STREAM0_DB_PATH=/tmp/stream0-demo.db ./target/release/stream0
+./target/release/stream0
 ```
 
-### Verify the server is up
+```
+Stream0 running on http://localhost:8080
+```
+
+### 2. Start a reviewer agent
+
+In a second terminal:
 
 ```bash
-curl http://localhost:8080/health
+./bin/stream0-cli agent start \
+  --name reviewer \
+  --description "Reviews code for bugs, security issues, and style"
 ```
 
-Expected response:
-
-```json
-{"status":"healthy","version":"0.2.0-rust"}
+```
+Agent "reviewer" registered
+Listening for tasks...
 ```
 
-### Run the auto-coordination demo
+This launches a Claude Code instance that connects to Stream0 and waits for work.
+
+### 3. Connect your Claude Code
+
+In your project directory:
 
 ```bash
-./demo.sh
+./bin/stream0-cli connect
 ```
 
-The demo shows the full pattern:
-
-- the user gives one goal to a primary agent
-- the primary agent fans the work out to two specialist workers
-- one worker asks a clarification question
-- both workers return `done`
-- the primary agent returns one final result to the user
-- the full thread history is printed at the end
-
-## How It Works
-
-### 1. Register agents
-
-Each participating agent registers once and gets an inbox.
-
-```bash
-curl -X POST http://localhost:8080/agents \
-  -H "Content-Type: application/json" \
-  -d '{"id": "primary-agent"}'
-
-curl -X POST http://localhost:8080/agents \
-  -H "Content-Type: application/json" \
-  -d '{"id": "research-worker"}'
-
-curl -X POST http://localhost:8080/agents \
-  -H "Content-Type: application/json" \
-  -d '{"id": "critic-worker"}'
+```
+Stream0 connected to Claude Code
+Available agents:
+  - reviewer: Reviews code for bugs, security issues, and style
 ```
 
-### 2. Send work to another agent
+### 4. Ask for a review
 
-```bash
-curl -X POST http://localhost:8080/agents/research-worker/inbox \
-  -H "Content-Type: application/json" \
-  -d '{
-    "thread_id": "strategy-memo-1",
-    "from": "primary-agent",
-    "type": "request",
-    "content": {
-      "task": "Gather market context for Stream0."
-    }
-  }'
+Open Claude Code and say:
+
+```
+You: ask the reviewer to look at my latest changes
 ```
 
-### 3. Read inbox messages
+Your agent sends the diff to the reviewer through Stream0, waits for the response, and shows you the result. Two Claude Code instances, collaborating through Stream0, and you never left your terminal.
 
-```bash
-curl "http://localhost:8080/agents/research-worker/inbox?status=unread&thread_id=strategy-memo-1"
-```
+## How Stream0 Works
 
-### 4. Continue the same thread
+Every agent gets an inbox. Every task gets a thread. Messages flow through typed states:
 
-Workers can respond with `done`, `failed`, or `question`. The primary agent can answer on the same `thread_id`.
-
-### 5. Retrieve the full thread history
-
-```bash
-curl "http://localhost:8080/threads/strategy-memo-1/messages"
-```
-
-## Why Not Just Use HTTP?
-
-Because the problem is usually not "how do I make one request?" The problem is "how does one agent hand off part of a task, keep the discussion attached to that task, and gather the results back later?"
-
-Use direct HTTP when:
-
-- both sides are online
-- the interaction is a single synchronous request/response
-- there is no threaded discussion or follow-up
-
-Use Stream0 when:
-
-- one primary agent needs to coordinate other agents
-- tasks may take time
-- work may span multiple messages
-- a worker may need clarification before continuing
-- you want the full task history on one thread
-
-## Claude Code Channel Integration
-
-If your primary agent is Claude Code, the recommended integration is a Channel plugin. Messages sent to your Claude Code inbox appear in the session automatically, so Claude Code can participate in Stream0 workflows without manual polling.
-
-See the [Channel tutorial](docs/tutorial-channel.md) for the full setup guide.
-
-## Message Types
-
-| Type | Purpose |
+| Type | Meaning |
 |------|---------|
-| `request` | Ask an agent to do work |
-| `question` | Need clarification mid-task |
-| `answer` | Reply to a question |
-| `done` | Task completed successfully |
-| `failed` | Task could not be completed |
-| `message` | General-purpose message |
+| `request` | "Do this work" |
+| `question` | "I need clarification" |
+| `answer` | "Here's the answer to your question" |
+| `done` | "Work complete, here are the results" |
+| `failed` | "Couldn't do it, here's why" |
 
-## API Reference
+A typical flow:
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/agents` | Register an agent (with optional `aliases` and `webhook`) |
-| `GET` | `/agents` | List all agents (includes `aliases` and `last_seen`) |
-| `DELETE` | `/agents/{id}` | Delete an agent |
-| `POST` | `/agents/{id}/inbox` | Send a message |
-| `GET` | `/agents/{id}/inbox` | Read inbox (`?status=unread&thread_id=X&timeout=10`) |
-| `POST` | `/inbox/messages/{id}/ack` | Mark a message as read |
-| `GET` | `/threads/{thread_id}/messages` | Full conversation history |
-| `GET` | `/health` | Health check |
-
-## Deploying to Production
-
-See [SELF_HOSTING.md](SELF_HOSTING.md) for the full guide. The short version:
-
-```bash
-cargo build --release
-./target/release/stream0 --config stream0.yaml
+```
+primary → reviewer:  request  "Review this diff"
+reviewer → primary:  question "Is the timeout change intentional?"
+primary → reviewer:  answer   "Yes, we increased it to 30s for slow networks"
+reviewer → primary:  done     "Looks good. Two style suggestions: ..."
 ```
 
-Stream0 supports API key authentication and multi-tenant isolation. Multiple teams can share one instance without seeing each other's data.
+Everything stays on one `thread_id`. The full conversation history is always available.
+
+## API
+
+| Method | Endpoint | What it does |
+|--------|----------|-------------|
+| `POST` | `/agents` | Register an agent (`id`, `description`, `aliases`, `webhook`) |
+| `GET` | `/agents` | List agents with descriptions and online status |
+| `POST` | `/agents/{id}/inbox` | Send a message (`thread_id`, `from`, `type`, `content`) |
+| `GET` | `/agents/{id}/inbox` | Poll inbox (`?status=unread&thread_id=X&timeout=30`) |
+| `POST` | `/inbox/messages/{id}/ack` | Mark message as read |
+| `GET` | `/threads/{id}/messages` | Full thread history |
 
 ## For AI Agents
 
-If you are an AI agent reading this, see [STREAM0_SKILL.md](STREAM0_SKILL.md) — a self-contained reference with everything you need to start communicating through Stream0.
+If you are an AI agent, see [STREAM0_SKILL.md](STREAM0_SKILL.md) — everything you need to start communicating through Stream0.
+
+## Self-Hosting
+
+See [SELF_HOSTING.md](SELF_HOSTING.md). Stream0 supports API key auth and multi-tenant isolation — multiple teams on one instance without seeing each other's data.
 
 ## License
 
