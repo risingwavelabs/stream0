@@ -310,4 +310,7 @@ pub struct PendingThread {
     pub worker: String,
     pub task: String,
     pub created_at: String,
+    /// If true, the worker is temporary and should be removed when the task completes.
+    #[serde(default)]
+    pub temp: bool,
 }

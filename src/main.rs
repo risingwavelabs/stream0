@@ -439,17 +439,22 @@ async fn cmd_worker_temp(task: &str, instructions: &str) {
     let lead_id = cfg.lead_id();
     let client = make_client(&cfg);
 
+    // Create temp worker
     let temp_name = format!("temp-{}", &uuid::Uuid::new_v4().to_string()[..8]);
-
-    if let Err(e) = client.register_worker(&temp_name, instructions, "local").await {
+    if let Err(e) = client
+        .register_worker(&temp_name, instructions, "local")
+        .await
+    {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
 
+    // Ensure lead agent exists
     let _ = client.register_agent(&lead_id).await;
 
+    // Delegate (non-blocking, same as cmd_delegate)
     let thread_id = format!("thread-{}", &uuid::Uuid::new_v4().to_string()[..8]);
-    if let Err(e) = client
+    match client
         .send_message(
             &temp_name,
             &thread_id,
@@ -459,58 +464,27 @@ async fn cmd_worker_temp(task: &str, instructions: &str) {
         )
         .await
     {
-        let _ = client.remove_worker(&temp_name).await;
-        eprintln!("Error: {}", e);
-        std::process::exit(1);
-    }
-
-    let created_at = chrono::Utc::now();
-    loop {
-        let messages = match client
-            .get_inbox(&lead_id, Some("unread"), Some(10.0))
-            .await
-        {
-            Ok(m) => m,
-            Err(e) => {
-                let _ = client.remove_worker(&temp_name).await;
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        };
-
-        let mut done = false;
-        for msg in messages {
-            let _ = client.ack_message(&msg.id).await;
-            if msg.thread_id != thread_id {
-                continue;
-            }
-
-            let content = msg
-                .content
-                .as_ref()
-                .and_then(|v| v.as_str())
-                .unwrap_or("(no content)");
-            let elapsed = (chrono::Utc::now() - created_at).num_seconds();
-
-            match msg.msg_type.as_str() {
-                "done" => {
-                    println!("done ({}s): {}", elapsed, content);
-                    done = true;
-                }
-                "failed" => {
-                    eprintln!("failed ({}s): {}", elapsed, content);
-                    done = true;
-                }
-                _ => {}
-            }
+        Ok(_) => {
+            // Store in pending with temp flag
+            let mut pending = config::CliConfig::load_pending();
+            pending.threads.insert(
+                thread_id.clone(),
+                config::PendingThread {
+                    worker: temp_name,
+                    task: task.to_string(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    temp: true,
+                },
+            );
+            let _ = config::CliConfig::save_pending(&pending);
+            println!("{}", thread_id);
         }
-
-        if done {
-            break;
+        Err(e) => {
+            let _ = client.remove_worker(&temp_name).await;
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
         }
     }
-
-    let _ = client.remove_worker(&temp_name).await;
 }
 
 // --- Node commands ---
@@ -652,6 +626,7 @@ async fn cmd_delegate(worker: &str, task: &str) {
                     worker: worker.to_string(),
                     task: task.to_string(),
                     created_at: chrono::Utc::now().to_rfc3339(),
+                    temp: false,
                 },
             );
             let _ = config::CliConfig::save_pending(&pending);
@@ -714,19 +689,28 @@ async fn cmd_wait() {
                     .and_then(|v| v.as_str())
                     .unwrap_or("(no content)");
 
+                let is_temp = thread_info.temp;
+                let worker_name = thread_info.worker.clone();
+
                 match msg.msg_type.as_str() {
                     "done" => {
-                        println!("{} done ({}): {}", thread_info.worker, elapsed, content);
+                        println!("{} done ({}): {}", worker_name, elapsed, content);
                         pending.threads.remove(&msg.thread_id);
+                        if is_temp {
+                            let _ = client.remove_worker(&worker_name).await;
+                        }
                     }
                     "failed" => {
-                        eprintln!("{} failed ({}): {}", thread_info.worker, elapsed, content);
+                        eprintln!("{} failed ({}): {}", worker_name, elapsed, content);
                         pending.threads.remove(&msg.thread_id);
+                        if is_temp {
+                            let _ = client.remove_worker(&worker_name).await;
+                        }
                     }
                     "question" => {
                         println!(
                             "\n{} asks (thread {}): {}\n  → Use: bh reply {} \"<your answer>\"",
-                            thread_info.worker, msg.thread_id, content, msg.thread_id
+                            worker_name, msg.thread_id, content, msg.thread_id
                         );
                     }
                     _ => {}
