@@ -31,33 +31,33 @@ curl -fsSL https://stream0.dev/install.sh | sh
 stream0
 ```
 
-### 2. Start a second agent
+### 2. Start a worker agent
 
-In a second terminal:
+In a second terminal, start an agent that will do work when asked:
 
 ```bash
-stream0 init claude --name agent-b --description "A second AI agent"
+stream0 init claude --name worker --description "Worker agent for tasks and discussions"
 claude --dangerously-load-development-channels server:stream0-channel
 ```
 
-### 3. Start your Claude Code
+### 3. Start your primary agent
 
-In a third terminal:
+In a third terminal, set up your own Claude Code:
 
 ```bash
 cd ~/my-project
-stream0 init claude --name me
+stream0 init claude --name primary
 claude --dangerously-load-development-channels server:stream0-channel
 ```
 
 ### 4. Try it
 
 ```
-You: ask agent-b to argue why Codex is better than Claude Code.
+You: ask worker to argue why Codex is better than Claude Code.
      then tell me why you disagree.
 ```
 
-Your agent sends the question to agent-b through Stream0, gets its argument back, and gives you its counterargument. Two AI agents debating, and you just asked one question.
+Your primary agent sends the question to the worker through Stream0, gets its argument back, and gives you its counterargument. Two AI agents debating, and you just asked one question.
 
 ## Other integrations
 
