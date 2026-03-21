@@ -930,7 +930,17 @@ async fn run_server(config_path: Option<&str>) {
     let addr = cfg.address();
     tracing::info!(address = %addr, "Server starting");
 
-    let listener = tokio::net::TcpListener::bind(&addr).await.expect("failed to bind");
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("Error: could not bind to {} ({})", addr, e);
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                eprintln!("Another process is already using that port. Kill it or use a different port:");
+                eprintln!("  STREAM0_SERVER_PORT=8081 stream0");
+            }
+            std::process::exit(1);
+        }
+    };
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
