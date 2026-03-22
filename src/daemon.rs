@@ -159,10 +159,10 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
 pub async fn run_remote(server_url: &str, node_id: &str, api_key: Option<&str>) {
     tracing::info!(node = node_id, "Node daemon started (remote)");
 
-    let client = BhClient::new(server_url);
-    if let Some(key) = api_key {
-        client.set_api_key(key);
-    }
+    let client = match api_key {
+        Some(key) => BhClient::with_api_key(server_url, key),
+        None => BhClient::new(server_url),
+    };
 
     // Register node
     if let Err(e) = client.register_node(node_id).await {
@@ -183,9 +183,14 @@ pub async fn run_remote(server_url: &str, node_id: &str, api_key: Option<&str>) 
             last_heartbeat = std::time::Instant::now();
         }
 
-        // TODO: Remote daemon needs a cross-group worker listing endpoint.
-        // For now, remote daemon is limited. Use local daemon on the server machine.
-        let workers: Vec<(String, crate::db::Worker)> = vec![];
+        let workers = match client.node_workers(node_id).await {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::error!("Failed to get workers: {}", e);
+                tokio::time::sleep(poll_interval).await;
+                continue;
+            }
+        };
 
         for (group, worker) in &workers {
             let messages = match client
@@ -308,7 +313,8 @@ fn resolve_runtime(configured: &str) -> &str {
 }
 
 fn which(cmd: &str) -> bool {
-    std::process::Command::new("which")
+    let check = if cfg!(windows) { "where" } else { "which" };
+    std::process::Command::new(check)
         .arg(cmd)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

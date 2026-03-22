@@ -49,12 +49,8 @@ impl BhClient {
         }
     }
 
-    pub fn set_api_key(&self, key: &str) {
-        let api_key = self.api_key.clone();
-        let key = key.to_string();
-        tokio::spawn(async move {
-            *api_key.write().await = Some(key);
-        });
+    pub async fn set_api_key(&self, key: &str) {
+        *self.api_key.write().await = Some(key.to_string());
     }
 
     async fn request(&self, req: reqwest::RequestBuilder) -> Result<reqwest::Response> {
@@ -202,6 +198,22 @@ impl BhClient {
         let resp = self.request(req).await?;
         let body: serde_json::Value = resp.json().await?;
         Ok(serde_json::from_value(body["nodes"].clone()).unwrap_or_default())
+    }
+
+    /// Get all active workers on a node across all groups (for daemon use).
+    pub async fn node_workers(&self, node_id: &str) -> Result<Vec<(String, crate::db::Worker)>> {
+        let req = self.client.get(format!("{}/nodes/{}/workers", self.base_url, node_id));
+        let resp = self.request(req).await?;
+        let body: serde_json::Value = resp.json().await?;
+        let items = body["workers"].as_array().cloned().unwrap_or_default();
+        let mut result = vec![];
+        for item in items {
+            let group = item["group"].as_str().unwrap_or("").to_string();
+            if let Ok(w) = serde_json::from_value::<crate::db::Worker>(item.clone()) {
+                result.push((group, w));
+            }
+        }
+        Ok(result)
     }
 
     pub async fn heartbeat_node(&self, id: &str) -> Result<()> {

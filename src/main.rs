@@ -446,12 +446,25 @@ async fn cmd_login(server_url: &str, api_key: Option<&str>) {
     cfg.server_url = url.to_string();
     cfg.api_key = api_key.map(|s| s.to_string());
     let _ = cfg.lead_id();
+
+    // Auto-set default_group from user's first group
+    if cfg.default_group.is_none() {
+        if let Ok(groups) = client.list_groups().await {
+            if let Some(first) = groups.first() {
+                cfg.default_group = Some(first.name.clone());
+            }
+        }
+    }
+
     if let Err(e) = cfg.save() {
         eprintln!("Error saving config: {}", e);
         std::process::exit(1);
     }
 
     println!("Login complete. Server: {}", url);
+    if let Some(ref g) = cfg.default_group {
+        println!("Default group: {}", g);
+    }
     println!("To install agent skill: b0 skill install claude-code  (or: codex)");
 }
 

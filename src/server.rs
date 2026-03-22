@@ -504,6 +504,27 @@ async fn add_to_group_handler(
     }
 }
 
+/// Returns all active workers on a node across all groups. Used by remote daemons.
+async fn node_workers_handler(
+    State(state): State<SharedState>,
+    Path(node_id): Path<String>,
+) -> impl IntoResponse {
+    match state.db.get_all_active_workers_for_node(&node_id) {
+        Ok(workers) => {
+            let items: Vec<serde_json::Value> = workers
+                .into_iter()
+                .map(|(group, w)| {
+                    let mut v = serde_json::to_value(&w).unwrap();
+                    v["group"] = serde_json::Value::String(group);
+                    v
+                })
+                .collect();
+            (StatusCode::OK, Json(serde_json::json!({"workers": items}))).into_response()
+        }
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
 async fn list_users_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
@@ -595,6 +616,7 @@ pub async fn run(config: ServerConfig) {
         // Nodes (global)
         .route("/nodes", get(list_nodes_handler).post(register_node_handler))
         .route("/nodes/{node_id}/heartbeat", post(heartbeat_node_handler))
+        .route("/nodes/{node_id}/workers", get(node_workers_handler))
         // Users (admin)
         .route("/users", get(list_users_handler))
         .route("/users/invite", post(invite_user_handler))
