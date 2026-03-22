@@ -1,72 +1,61 @@
 # Box0
 
-Box0 is an agent platform for deploying and managing AI workers across machines. It provides the infrastructure to run multiple specialized AI agents, delegate tasks to them, and collect results. Any agent with shell access (Claude Code, Codex, or a custom script) can act as a lead.
+A worker platform for AI agents. You define specialized workers, and your lead agent (Claude Code, Codex, or anything with a shell) delegates tasks to them in parallel.
 
-## What it does
+One agent can review code, check security, and write docs at the same time. Workers can run on the same machine or across multiple machines. Box0 handles the routing.
 
-- **Worker management.** Define named agents with specialized instructions. Deploy them on one machine or distribute across many.
-- **Task delegation.** Send tasks to workers from the CLI. Non-blocking. Workers execute in parallel.
-- **Multi-machine.** Workers run on remote nodes. The server routes tasks. Each node uses its own local credentials and compute.
-- **Multi-tenant.** Groups provide full isolation. Multiple teams share one server without seeing each other's workers or data.
-- **Agent integration.** First-class skill installation for Claude Code and Codex. Your lead agent learns to delegate automatically.
+```
+You: get three different perspectives on whether Claude Code or Codex
+     is better for professional development. then synthesize a conclusion.
 
-## Quick example: three agents debate "Claude Code vs Codex"
+Claude Code: I'll delegate to three workers in parallel.
 
-```bash
-# Start the server (one-time setup)
-b0 server
+             ux-expert: Claude Code has the better day-to-day experience.
+               The 1M context window means you rarely hit limits on large
+               codebases, and the skill system makes it extensible...
 
-# In another terminal: login and create workers
-b0 login http://localhost:8080 --key <admin-key>
-b0 group create my-team
-b0 group invite my-team --description "me"
-b0 login http://localhost:8080 --key <group-key>
+             architect: Codex's sandbox-first model is architecturally
+               cleaner. Every command runs in isolation, which eliminates
+               an entire class of accidental side effects...
 
-b0 worker add ux-expert \
-  --instructions "You are a UX researcher. Evaluate developer tools from the perspective of daily workflow, ergonomics, and productivity."
+             pragmatist: In practice, Claude Code ships faster. The tool
+               integration is tighter, the agent loop needs less babysitting,
+               and the permission model actually works for real teams...
 
-b0 worker add architect \
-  --instructions "You are a software architect. Evaluate developer tools from the perspective of technical capabilities, extensibility, and system design."
-
-b0 worker add pragmatist \
-  --instructions "You are a pragmatic tech lead. Cut through hype. Evaluate based on what actually ships faster with fewer bugs."
-
-# Fire off three parallel tasks
-b0 delegate ux-expert "Compare Claude Code and OpenAI Codex CLI. Which one provides a better developer experience and why?"
-b0 delegate architect "Compare Claude Code and OpenAI Codex CLI from a technical architecture perspective. Strengths, weaknesses, trade-offs."
-b0 delegate pragmatist "Claude Code vs Codex CLI: which one actually makes engineers more productive? Be honest and specific."
-
-# Wait for all three to come back
-b0 wait
-# ux-expert done (45s): Claude Code's 1M context window means...
-# architect done (52s): Codex's sandbox-first approach provides...
-# pragmatist done (38s): In practice, Claude Code ships faster for...
+             Based on these three perspectives, here's my synthesis: ...
 ```
 
-Three independent AI agents, three perspectives, running in parallel. You get a real debate instead of one agent's opinion.
+One question from you. Three workers debating in parallel. Your lead agent synthesizes the results. The workers can be on different machines. Box0 routes everything by name.
 
-## End-to-End Setup
+## Why multi-agent
 
-### 1. Build
+A single agent is a single perspective, a single thread of execution, and a single machine's resources.
+
+With multiple agents, you can:
+
+- **Get diverse viewpoints.** Different workers with different instructions produce genuinely different analysis.
+- **Run tasks in parallel.** A code review, a security audit, and a docs update happen simultaneously instead of sequentially.
+- **Distribute across machines.** Put your ML worker on a GPU box, your code reviewer on a dev server, your security auditor on a locked-down machine. Each uses its own local credentials.
+- **Separate concerns.** Each worker has focused instructions. A reviewer that only reviews produces better reviews than a generalist doing everything.
+
+## Getting started
+
+This walkthrough uses Claude Code as the lead agent. Box0 itself is runtime-agnostic (see [CLI reference](#cli-reference)), but Claude Code is the easiest way to see it in action.
+
+### 1. Install and start the server
 
 ```bash
 git clone https://github.com/risingwavelabs/box0.git
 cd box0
 cargo build --release
 export PATH="$PWD/target/release:$PATH"
-```
 
-### 2. Start Server
-
-```bash
 b0 server
-# First start prints:
 #   Admin key: b0_abc123...
-#   Save this key. Use it to login:
-#   b0 login http://127.0.0.1:8080 --key b0_abc123...
+#   Save this key.
 ```
 
-### 3. Login and Create a Group
+### 2. Set up a group
 
 ```bash
 b0 login http://localhost:8080 --key b0_abc123...
@@ -76,50 +65,78 @@ b0 group invite my-team --description "me"
 b0 login http://localhost:8080 --key b0_def456...
 ```
 
-### 4. Add Workers
+### 3. Create workers
 
 ```bash
-b0 worker add reviewer --instructions "Senior code reviewer. Focus on correctness and edge cases."
-b0 worker add security --instructions "Security engineer. Find vulnerabilities."
+b0 worker add ux-expert \
+  --instructions "You are a UX researcher. Evaluate developer tools from the perspective of daily workflow, ergonomics, and productivity."
+
+b0 worker add architect \
+  --instructions "You are a software architect. Evaluate tools from the perspective of technical capabilities, extensibility, and system design."
+
+b0 worker add pragmatist \
+  --instructions "You are a pragmatic tech lead. Cut through hype. Evaluate based on what actually ships faster with fewer bugs."
 ```
 
-### 5. Delegate and Wait
+### 4. Install the skill for your lead agent
 
-```bash
-b0 delegate reviewer "Review src/main.rs for correctness issues."
-b0 delegate security "Check src/main.rs for security vulnerabilities."
-b0 wait
-```
-
-That's it. Two workers analyze your code in parallel and report back.
-
-## Using with Claude Code
-
-Install the Box0 skill so Claude Code automatically delegates when appropriate:
+For Claude Code:
 
 ```bash
 b0 skill install claude-code
 ```
 
-Now Claude Code knows about your workers. When you say "review this PR and check for security issues", Claude Code will automatically run `b0 delegate` to your workers instead of doing everything itself.
-
-## Using with Codex
+For Codex:
 
 ```bash
 b0 skill install codex
 ```
 
-This appends Box0 instructions to `~/.codex/AGENTS.md`. Codex will learn to delegate tasks to your workers.
-
-## Using with Other Agents
+For other agents:
 
 ```bash
-b0 skill show
+b0 skill show  # prints skill content to stdout, paste into your agent's instructions
 ```
 
-Prints the skill content to stdout. Paste it into whatever your agent uses for custom instructions.
+### 5. Use it
 
-## One-Off Tasks
+Open Claude Code (or Codex) and talk normally:
+
+```
+You: ask ux-expert, architect, and pragmatist whether Claude Code or Codex
+     is better for professional software development. then give me your
+     own conclusion based on their arguments.
+```
+
+Claude Code will:
+1. Run `b0 delegate ux-expert "..."`, `b0 delegate architect "..."`, `b0 delegate pragmatist "..."`
+2. Run `b0 wait` to collect all three results
+3. Synthesize the arguments and present a conclusion
+
+Three workers, three perspectives, one answer back to you.
+
+## How it works
+
+```
+Your agent (lead)          Box0 Server              Worker nodes
+     |                         |                        |
+     |  b0 delegate reviewer   |                        |
+     |  ---------------------->  stores in inbox         |
+     |  b0 delegate security   |                        |
+     |  ---------------------->  stores in inbox         |
+     |                         |                        |
+     |                         |   daemon polls inboxes  |
+     |                         |   spawns claude CLI     |
+     |                         |   <-------- results     |
+     |  b0 wait                |                        |
+     |  <----------------------  delivers results        |
+```
+
+Workers are not long-running processes. When a task arrives, the node daemon spawns `claude --print --output-format json --system-prompt "<instructions>"` as a subprocess. The task is piped via stdin. When done, the result goes back through the inbox to whoever delegated it.
+
+Workers use the machine's existing authentication (OAuth or API key). No special credential setup needed.
+
+## One-off tasks
 
 Don't want to create a named worker? Use `worker temp`:
 
@@ -128,9 +145,9 @@ b0 worker temp "Summarize the top 5 differences between Rust and Go."
 b0 wait
 ```
 
-Creates a temporary worker, runs the task, and auto-cleans up.
+Creates a temporary worker, runs the task, auto-cleans up.
 
-## Multi-Machine
+## Multi-machine
 
 Run workers on different machines:
 
@@ -147,25 +164,20 @@ b0 delegate ml-agent "Analyze this dataset."
 b0 wait
 ```
 
-The task is routed to Machine B. Claude Code CLI runs there, using Machine B's authentication and compute.
+The task is routed to Machine B. Claude CLI runs there, using Machine B's credentials and compute.
 
-## CLI Reference
+## CLI reference
 
 ```
 b0 server [--host] [--port] [--db]       Start server
 b0 login <url> --key <key>               Connect
 b0 logout                                Disconnect
-b0 reset                                 Clean slate (delete DB, config, skills)
+b0 reset                                 Clean slate
 b0 status                                Show connection info
 
 b0 worker add <name> --instructions "..."  [--node <node>]
-b0 worker ls
-b0 worker info <name>
-b0 worker update <name> --instructions "..."
-b0 worker stop/start <name>
-b0 worker logs <name>
-b0 worker remove <name>
-b0 worker temp "<task>"                  One-off (non-blocking)
+b0 worker ls / info / update / stop / start / logs / remove
+b0 worker temp "<task>"                  One-off task (non-blocking)
 
 b0 delegate <worker> "<task>"            Send task (non-blocking)
 b0 delegate <worker>                     Read task from stdin
@@ -175,23 +187,10 @@ b0 reply <thread-id> "<answer>"          Answer a worker's question
 b0 node join <url> [--name] [--key]      Join as worker node
 b0 node ls                               List nodes
 
-b0 group create <name>                   Create group (admin)
-b0 group invite <group> [--description]  Generate key (admin)
-b0 group keys                            List keys
-b0 group revoke <prefix>                 Revoke key (admin)
-
-b0 skill install claude-code             Install for Claude Code
-b0 skill install codex                   Install for Codex
-b0 skill uninstall <agent>               Remove
-b0 skill show                            Print to stdout
+b0 group create / ls / invite / keys / revoke
+b0 skill install <agent> / uninstall / show
 ```
-
-## How It Works
-
-Workers are not long-running processes. When a task arrives, the node daemon spawns `claude --print --output-format json --system-prompt "<instructions>"` as a subprocess. The task is piped via stdin. When done, the result goes back through the server's inbox to whoever delegated it.
-
-Workers use the machine's existing authentication (OAuth or API key). No special credential setup needed.
 
 ## License
 
-MIT License. Copyright (c) RisingWave Labs.
+MIT License. Copyright (c) 2026 RisingWave Labs.
