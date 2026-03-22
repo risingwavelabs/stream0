@@ -699,6 +699,36 @@ impl Database {
         Ok(workers)
     }
 
+    /// Get all active workers on a node across ALL tenants.
+    /// Returns (tenant, worker) pairs. Used by the local daemon.
+    pub fn get_all_active_workers_for_node(
+        &self,
+        node_id: &str,
+    ) -> Result<Vec<(String, Worker)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT tenant, name, instructions, node_id, status, registered_by, created_at FROM workers WHERE node_id = ?1 AND status = 'active'",
+        )?;
+        let workers = stmt
+            .query_map(params![node_id], |row| {
+                let tenant: String = row.get(0)?;
+                let ts: String = row.get(6)?;
+                Ok((
+                    tenant,
+                    Worker {
+                        name: row.get(1)?,
+                        instructions: row.get(2)?,
+                        node_id: row.get(3)?,
+                        status: row.get(4)?,
+                        registered_by: row.get(5)?,
+                        created_at: Database::parse_ts(&ts),
+                    },
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(workers)
+    }
+
     /// Get recent task threads for a worker (for logs).
     pub fn get_worker_logs(
         &self,

@@ -24,7 +24,8 @@ pub async fn run_local(state: SharedState) {
     let poll_interval = Duration::from_millis(POLL_INTERVAL_MS);
 
     loop {
-        let workers = match state.db.get_active_workers_for_node("default", "local") {
+        // Get workers across ALL tenants on the local node
+        let tenant_workers = match state.db.get_all_active_workers_for_node("local") {
             Ok(w) => w,
             Err(e) => {
                 tracing::error!("Failed to get workers: {}", e);
@@ -33,23 +34,22 @@ pub async fn run_local(state: SharedState) {
             }
         };
 
-        for worker in &workers {
+        for (tenant, worker) in &tenant_workers {
             let messages = match state
                 .db
-                .get_inbox_messages("default", &worker.name, Some("unread"), None)
+                .get_inbox_messages(tenant, &worker.name, Some("unread"), None)
             {
                 Ok(m) => m,
                 Err(_) => continue,
             };
 
             for msg in messages {
-                // Only handle request and answer types
                 if msg.msg_type != "request" && msg.msg_type != "answer" {
-                    let _ = state.db.ack_inbox_message("default", &msg.id);
+                    let _ = state.db.ack_inbox_message(tenant, &msg.id);
                     continue;
                 }
 
-                let _ = state.db.ack_inbox_message("default", &msg.id);
+                let _ = state.db.ack_inbox_message(tenant, &msg.id);
 
                 let permit = match semaphore.clone().try_acquire_owned() {
                     Ok(p) => p,
@@ -60,6 +60,7 @@ pub async fn run_local(state: SharedState) {
                 };
 
                 let state = state.clone();
+                let tenant = tenant.clone();
                 let instructions = worker.instructions.clone();
                 let sessions = sessions.clone();
                 let msg = msg.clone();
@@ -74,7 +75,6 @@ pub async fn run_local(state: SharedState) {
                         .unwrap_or("")
                         .to_string();
 
-                    // Check for existing session (multi-turn resume)
                     let resume_session = if msg.msg_type == "answer" {
                         sessions.lock().await.get(&msg.thread_id).cloned()
                     } else {
@@ -94,7 +94,6 @@ pub async fn run_local(state: SharedState) {
 
                     match result {
                         Ok(output) => {
-                            // Store session_id for potential multi-turn
                             if let Some(sid) = &output.session_id {
                                 sessions
                                     .lock()
@@ -108,7 +107,7 @@ pub async fn run_local(state: SharedState) {
                                 "Task completed"
                             );
                             let _ = state.db.send_inbox_message(
-                                "default",
+                                &tenant,
                                 &msg.thread_id,
                                 &msg.to_agent,
                                 &msg.from_agent,
@@ -124,7 +123,7 @@ pub async fn run_local(state: SharedState) {
                                 "Task failed"
                             );
                             let _ = state.db.send_inbox_message(
-                                "default",
+                                &tenant,
                                 &msg.thread_id,
                                 &msg.to_agent,
                                 &msg.from_agent,

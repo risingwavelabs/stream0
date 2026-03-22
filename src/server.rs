@@ -618,7 +618,7 @@ pub async fn run(config: ServerConfig) {
             tracing::info!("Admin key generated (first start)");
             println!("\n  Admin key: {}\n", key);
             println!("  Save this key. Use it to login:");
-            println!("  bh login http://{}:{} --key {}\n", config.host, config.port, key);
+            println!("  b0 login http://{}:{} --key {}\n", config.host, config.port, key);
         }
         Ok(None) => {}
         Err(e) => tracing::error!("Failed to bootstrap admin key: {}", e),
