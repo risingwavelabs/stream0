@@ -2,15 +2,16 @@
 
 ## Prerequisites
 
-- Rust toolchain installed
 - Claude Code CLI installed and authenticated (`claude --version`)
 
+Install Box0:
+
 ```bash
-cd box0
-cargo build --release
-export PATH="$PWD/target/release:$PATH"
+npm install -g @box0/cli@latest
 b0 --version
 ```
+
+Or build from source: `git clone https://github.com/risingwavelabs/box0.git && cd box0 && cargo build --release && export PATH="$PWD/target/release:$PATH"`
 
 ---
 

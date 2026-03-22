@@ -18,20 +18,33 @@ Box0 provides the infrastructure to:
 - **Integrate with existing tools.** Claude Code and Codex can learn to use Box0 automatically through skill installation. No workflow changes required.
 - **Isolate teams.** Groups provide workspace isolation. Multiple users or teams share one Box0 server without seeing each other's agents or data.
 
+## Install
+
+```bash
+npm install -g @box0/cli@latest
+```
+
+Or run directly without installing:
+
+```bash
+npx @box0/cli@latest server
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/risingwavelabs/box0.git
+cd box0 && cargo build --release
+export PATH="$PWD/target/release:$PATH"
+```
+
 ## Getting started
 
 This walkthrough uses Claude Code. Box0 also works with Codex or any tool that can run shell commands.
 
-### 1. Install and start the server
+### 1. Start the server
 
-```bash
-git clone https://github.com/risingwavelabs/box0.git
-cd box0
-cargo build --release
-export PATH="$PWD/target/release:$PATH"
-```
-
-Start the server (in a separate terminal):
+In a separate terminal:
 
 ```bash
 b0 server
