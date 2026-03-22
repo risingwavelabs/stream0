@@ -4,7 +4,6 @@ const path = require("path");
 const os = require("os");
 const { execSync } = require("child_process");
 
-const VERSION = "0.1.0";
 const REPO = "risingwavelabs/box0";
 
 function getPlatformKey() {
@@ -61,16 +60,12 @@ async function main() {
   const binaryName = getBinaryName();
   const destPath = path.join(__dirname, "bin", binaryName);
 
-  // Skip if binary already exists
-  if (fs.existsSync(destPath)) {
-    return;
-  }
 
   const ext = os.platform() === "win32" ? ".exe" : "";
   const assetName = `b0-${platformKey}${ext}`;
-  const url = `https://github.com/${REPO}/releases/download/v${VERSION}/${assetName}`;
+  const url = `https://github.com/${REPO}/releases/latest/download/${assetName}`;
 
-  console.log(`Downloading Box0 v${VERSION} for ${platformKey}...`);
+  console.log(`Downloading Box0 (latest) for ${platformKey}...`);
 
   try {
     await download(url, destPath);
