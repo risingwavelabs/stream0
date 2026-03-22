@@ -1,8 +1,8 @@
 # Box0
 
-A worker platform for AI agents. You define specialized workers, and your lead agent (Claude Code, Codex, or anything with a shell) delegates tasks to them in parallel.
+Run a team of AI agents, not just one.
 
-One agent can review code, check security, and write docs at the same time. Workers can run on the same machine or across multiple machines. Box0 handles the routing.
+Box0 lets you deploy multiple AI agents with different specializations, run them in parallel across one or many machines, and orchestrate them from Claude Code, Codex, or any tool with a shell.
 
 ```
 You: get three different perspectives on whether Claude Code or Codex
