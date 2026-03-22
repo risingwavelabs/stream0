@@ -520,12 +520,23 @@ fn error_response(status: StatusCode, message: &str) -> axum::response::Response
 pub async fn run(config: ServerConfig) {
     let db = Database::new(&config.db_path).expect("failed to initialize database");
 
-    // Bootstrap admin user on first start
+    // Bootstrap admin user on first start + auto-configure local CLI
     match db.bootstrap_admin() {
         Ok(Some((user, key))) => {
             tracing::info!("Admin user created (first start)");
             println!("\n  Admin key: {}", key);
-            println!("  User: {} ({})\n", user.name, user.id);
+            println!("  User: {} ({})", user.name, user.id);
+
+            // Auto-write ~/.b0/config.toml so the server machine is ready to use
+            let mut cli_cfg = crate::config::CliConfig::load();
+            cli_cfg.server_url = format!("http://127.0.0.1:{}", config.port);
+            cli_cfg.api_key = Some(key.clone());
+            let _ = cli_cfg.lead_id(); // generate lead_id
+            if let Err(e) = cli_cfg.save() {
+                tracing::warn!("Failed to auto-configure CLI: {}", e);
+            } else {
+                println!("  CLI configured. No login needed on this machine.\n");
+            }
         }
         Ok(None) => {}
         Err(e) => tracing::error!("Failed to bootstrap admin: {}", e),
