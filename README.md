@@ -1,44 +1,25 @@
 # Box0
 
-Box0 is a multi-agent platform. Define AI agents with different specializations, deploy them across your machines, and let them work in parallel. Claude Code, Codex, or any CLI agent can delegate tasks to them.
+Box0 is a multi-agent platform. It lets you run multiple AI agents with different specializations across one or more machines, assign tasks to them in parallel, and collect results.
 
-```
-You: get three different perspectives on whether Claude Code or Codex
-     is better for professional development. then synthesize a conclusion.
+## Problem
 
-Claude Code: I'll delegate to three workers in parallel.
+AI coding agents like Claude Code and Codex work alone. One agent handles everything sequentially: code review, security audit, documentation, testing. If you want multiple perspectives on the same question, or need several tasks done at once, you wait for one agent to finish before it can start the next.
 
-             ux-expert: Claude Code has the better day-to-day experience.
-               The 1M context window means you rarely hit limits on large
-               codebases, and the skill system makes it extensible...
+There is no standard way to run multiple agents as a team, split work between them, or distribute them across machines.
 
-             architect: Codex's sandbox-first model is architecturally
-               cleaner. Every command runs in isolation, which eliminates
-               an entire class of accidental side effects...
+## Solution
 
-             pragmatist: In practice, Claude Code ships faster. The tool
-               integration is tighter, the agent loop needs less babysitting,
-               and the permission model actually works for real teams...
+Box0 provides the infrastructure to:
 
-             Based on these three perspectives, here's my synthesis: ...
-```
-
-One question from you. Three workers debating in parallel. Your lead agent synthesizes the results. The workers can be on different machines. Box0 routes everything by name.
-
-## Why multi-agent
-
-A single agent is a single perspective, a single thread of execution, and a single machine's resources.
-
-With multiple agents, you can:
-
-- **Get diverse viewpoints.** Different workers with different instructions produce genuinely different analysis.
-- **Run tasks in parallel.** A code review, a security audit, and a docs update happen simultaneously instead of sequentially.
-- **Distribute across machines.** Put your ML worker on a GPU box, your code reviewer on a dev server, your security auditor on a locked-down machine. Each uses its own local credentials.
-- **Separate concerns.** Each worker has focused instructions. A reviewer that only reviews produces better reviews than a generalist doing everything.
+- **Run multiple agents in parallel.** Define agents with different instructions. They execute concurrently, each as a separate process.
+- **Distribute across machines.** Agents can run on your laptop, a GPU server, or any machine. Box0 routes tasks by name. Each machine uses its own local credentials.
+- **Integrate with existing tools.** Claude Code and Codex can learn to use Box0 automatically through skill installation. No workflow changes required.
+- **Isolate teams.** Groups provide workspace isolation. Multiple users or teams share one Box0 server without seeing each other's agents or data.
 
 ## Getting started
 
-This walkthrough uses Claude Code as the lead agent. Box0 itself is runtime-agnostic (see [CLI reference](#cli-reference)), but Claude Code is the easiest way to see it in action.
+This walkthrough uses Claude Code. Box0 also works with Codex or any tool that can run shell commands.
 
 ### 1. Install and start the server
 
@@ -70,7 +51,7 @@ b0 worker add --group admin pragmatist \
   --instructions "You are a pragmatic tech lead. Cut through hype. Evaluate based on what actually ships faster with fewer bugs."
 ```
 
-### 3. Install the skill for your lead agent
+### 3. Install the skill for Claude Code (or Codex)
 
 For Claude Code:
 
@@ -100,12 +81,7 @@ You: ask ux-expert, architect, and pragmatist whether Claude Code or Codex
      own conclusion based on their arguments.
 ```
 
-Claude Code will:
-1. Run `b0 delegate --group admin ux-expert "..."`, etc. for each worker
-2. Run `b0 wait` to collect all three results
-3. Synthesize the arguments and present a conclusion
-
-Three workers, three perspectives, one answer back to you.
+Claude Code automatically calls `b0 delegate` for each worker, runs `b0 wait` to collect the results, and synthesizes a conclusion. Three agents, three perspectives, one answer.
 
 ## Adding team members
 
