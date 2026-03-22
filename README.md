@@ -68,7 +68,8 @@ b0 skill install codex
 For other agents:
 
 ```bash
-b0 skill show  # prints skill content to stdout, paste into your agent's instructions
+# Prints skill content to stdout. Paste into your agent's custom instructions.
+b0 skill show
 ```
 
 ### 4. Use it
