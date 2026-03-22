@@ -1,8 +1,8 @@
 # Box0
 
-Run a team of AI agents, not just one.
+Box0 is a multi-agent orchestration server. You define AI agents with specialized instructions, deploy them on one or more machines, and delegate tasks to them. Tasks run in parallel. Results come back to your CLI or to your lead agent (Claude Code, Codex, etc).
 
-Box0 lets you deploy multiple AI agents with different specializations, run them in parallel across one or many machines, and orchestrate them from Claude Code, Codex, or any tool with a shell.
+Think of it as a task router for LLM processes. You send a task to an agent by name, Box0 routes it to the right machine, spins up a Claude CLI subprocess with the agent's instructions, and delivers the result back.
 
 ```
 You: get three different perspectives on whether Claude Code or Codex
