@@ -51,6 +51,11 @@ enum Command {
         #[command(subcommand)]
         command: GroupCommand,
     },
+    /// Manage agent skill integrations
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommand,
+    },
     /// Delegate a task to a worker
     Delegate {
         worker: String,
@@ -104,6 +109,22 @@ enum WorkerCommand {
         task: String,
         #[arg(long, default_value = "You are a helpful assistant. Complete the task. Be concise.")]
         instructions: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillCommand {
+    /// Print skill content to stdout
+    Show,
+    /// Install skill for an agent runtime
+    Install {
+        /// Agent runtime: claude-code, codex
+        agent: String,
+    },
+    /// Uninstall skill for an agent runtime
+    Uninstall {
+        /// Agent runtime: claude-code, codex
+        agent: String,
     },
 }
 
@@ -205,6 +226,12 @@ async fn main() {
             }
         },
 
+        Command::Skill { command } => match command {
+            SkillCommand::Show => cmd_skill_show(),
+            SkillCommand::Install { agent } => cmd_skill_install(&agent),
+            SkillCommand::Uninstall { agent } => cmd_skill_uninstall(&agent),
+        },
+
         Command::Node { command } => match command {
             NodeCommand::Join {
                 server_url,
@@ -272,13 +299,8 @@ async fn cmd_login(server_url: &str, api_key: Option<&str>) {
         std::process::exit(1);
     }
 
-    if let Err(e) = config::CliConfig::install_skill(url) {
-        eprintln!("Warning: failed to install skill: {}", e);
-    } else {
-        println!("Claude Code skill installed.");
-    }
-
     println!("Login complete. Server: {}", url);
+    println!("To install agent skill: bh skill install claude-code  (or: codex)");
 }
 
 fn cmd_reset() {
@@ -289,19 +311,71 @@ fn cmd_reset() {
         }
     }
 
-    // Remove CLI config and pending state
-    let _ = config::CliConfig::uninstall_skill();
+    // Remove CLI config, pending state, and all skills
+    let _ = config::CliConfig::uninstall_skill_claude_code();
+    let _ = config::CliConfig::uninstall_skill_codex();
     let cfg = config::CliConfig::load();
     let _ = cfg.clear();
 
-    println!("Reset complete. Removed database, config, and skill.");
+    println!("Reset complete. Removed database, config, and skills.");
 }
 
 fn cmd_logout() {
+    let _ = config::CliConfig::uninstall_skill_claude_code();
+    let _ = config::CliConfig::uninstall_skill_codex();
     let cfg = config::CliConfig::load();
-    let _ = config::CliConfig::uninstall_skill();
     let _ = cfg.clear();
     println!("Logged out.");
+}
+
+// --- Skill commands ---
+
+fn cmd_skill_show() {
+    let cfg = config::CliConfig::load();
+    print!("{}", config::CliConfig::skill_content(&cfg.server_url()));
+}
+
+fn cmd_skill_install(agent: &str) {
+    let cfg = config::CliConfig::load();
+    let url = cfg.server_url();
+
+    match agent {
+        "claude-code" => match config::CliConfig::install_skill_claude_code(&url) {
+            Ok(()) => println!("Skill installed for Claude Code (~/.claude/skills/bh/SKILL.md)"),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        },
+        "codex" => match config::CliConfig::install_skill_codex(&url) {
+            Ok(()) => println!("Skill installed for Codex (~/.codex/AGENTS.md)"),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        },
+        _ => {
+            eprintln!("Unknown agent: {}. Supported: claude-code, codex", agent);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_skill_uninstall(agent: &str) {
+    match agent {
+        "claude-code" => {
+            let _ = config::CliConfig::uninstall_skill_claude_code();
+            println!("Skill uninstalled for Claude Code.");
+        }
+        "codex" => {
+            let _ = config::CliConfig::uninstall_skill_codex();
+            println!("Skill uninstalled for Codex.");
+        }
+        _ => {
+            eprintln!("Unknown agent: {}. Supported: claude-code, codex", agent);
+            std::process::exit(1);
+        }
+    }
 }
 
 // --- Worker commands ---

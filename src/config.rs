@@ -178,33 +178,13 @@ impl CliConfig {
 
     // --- Skill Installation ---
 
-    fn skill_dir() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".claude")
-            .join("skills")
-            .join("bh")
-    }
+    const SKILL_MARKER_START: &str = "<!-- boxhouse-skill-start -->";
+    const SKILL_MARKER_END: &str = "<!-- boxhouse-skill-end -->";
 
-    fn skill_path() -> PathBuf {
-        Self::skill_dir().join("SKILL.md")
-    }
-
-    pub fn install_skill(server_url: &str) -> anyhow::Result<()> {
-        fs::create_dir_all(Self::skill_dir())?;
-
-        let skill_content = format!(
-r#"---
-name: bh
-description: |
-  Delegate tasks to specialized AI workers via Boxhouse.
-  Use when the user asks to review code, check security, run tests,
-  or any task that matches a registered worker's expertise.
-allowed-tools:
-  - Bash
----
-
-# Boxhouse (`bh`) — Agent Delegation
+    /// Generate the core skill content (agent-agnostic).
+    pub fn skill_content(server_url: &str) -> String {
+        format!(
+r#"# Boxhouse (`bh`) — Agent Delegation
 
 You have access to a team of specialized AI workers managed by Boxhouse.
 The server is at: {server_url}
@@ -265,23 +245,116 @@ bh wait
 If a worker asks a question during `bh wait`, you'll see it. Use `bh reply <thread-id> "<answer>"` to respond. The worker will continue after receiving your answer.
 "#,
             server_url = server_url
+        )
+    }
+
+    /// Install skill for Claude Code: ~/.claude/skills/bh/SKILL.md
+    pub fn install_skill_claude_code(server_url: &str) -> anyhow::Result<()> {
+        let dir = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".claude")
+            .join("skills")
+            .join("bh");
+        fs::create_dir_all(&dir)?;
+
+        let content = format!(
+r#"---
+name: bh
+description: |
+  Delegate tasks to specialized AI workers via Boxhouse.
+  Use when the user asks to review code, check security, run tests,
+  or any task that matches a registered worker's expertise.
+allowed-tools:
+  - Bash
+---
+
+{body}"#,
+            body = Self::skill_content(server_url)
         );
 
-        fs::write(Self::skill_path(), skill_content)?;
+        fs::write(dir.join("SKILL.md"), content)?;
         Ok(())
     }
 
-    pub fn uninstall_skill() -> anyhow::Result<()> {
-        let dir = Self::skill_dir();
+    pub fn uninstall_skill_claude_code() -> anyhow::Result<()> {
+        let dir = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".claude")
+            .join("skills")
+            .join("bh");
         if dir.exists() {
             fs::remove_dir_all(&dir)?;
         }
-        // Also clean up old format (bh.md plain file)
-        let old_path = dir.with_extension("md");
-        if old_path.exists() {
-            let _ = fs::remove_file(&old_path);
+        // Clean up legacy bh.md
+        let old = dir.with_extension("md");
+        if old.exists() {
+            let _ = fs::remove_file(&old);
         }
         Ok(())
+    }
+
+    /// Install skill for Codex: append marked section to ~/.codex/AGENTS.md
+    pub fn install_skill_codex(server_url: &str) -> anyhow::Result<()> {
+        let agents_path = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".codex")
+            .join("AGENTS.md");
+
+        // Ensure directory exists
+        if let Some(parent) = agents_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        // Read existing content and remove old boxhouse section if present
+        let existing = fs::read_to_string(&agents_path).unwrap_or_default();
+        let cleaned = Self::remove_marked_section(&existing);
+
+        // Append new section
+        let section = format!(
+            "\n{}\n{}{}\n",
+            Self::SKILL_MARKER_START,
+            Self::skill_content(server_url),
+            Self::SKILL_MARKER_END,
+        );
+
+        let new_content = format!("{}{}", cleaned.trim_end(), section);
+        fs::write(&agents_path, new_content)?;
+        Ok(())
+    }
+
+    pub fn uninstall_skill_codex() -> anyhow::Result<()> {
+        let agents_path = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".codex")
+            .join("AGENTS.md");
+
+        if !agents_path.exists() {
+            return Ok(());
+        }
+
+        let content = fs::read_to_string(&agents_path)?;
+        let cleaned = Self::remove_marked_section(&content);
+        let trimmed = cleaned.trim().to_string();
+
+        if trimmed.is_empty() {
+            fs::remove_file(&agents_path)?;
+        } else {
+            fs::write(&agents_path, format!("{}\n", trimmed))?;
+        }
+        Ok(())
+    }
+
+    fn remove_marked_section(content: &str) -> String {
+        if let (Some(start), Some(end)) = (
+            content.find(Self::SKILL_MARKER_START),
+            content.find(Self::SKILL_MARKER_END),
+        ) {
+            let before = &content[..start];
+            let after = &content[end + Self::SKILL_MARKER_END.len()..];
+            format!("{}{}", before, after)
+        } else {
+            content.to_string()
+        }
     }
 
     pub fn clear(self) -> anyhow::Result<()> {
