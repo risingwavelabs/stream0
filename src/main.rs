@@ -30,20 +30,20 @@ enum Command {
     },
     /// Disconnect
     Logout,
-    /// Manage workers
-    Worker {
+    /// Manage agents
+    Agent {
         #[command(subcommand)]
-        command: WorkerCommand,
+        command: AgentCommand,
     },
-    /// Manage nodes
-    Node {
+    /// Manage machines
+    Machine {
         #[command(subcommand)]
-        command: NodeCommand,
+        command: MachineCommand,
     },
-    /// Manage groups
-    Group {
+    /// Manage workspaces
+    Workspace {
         #[command(subcommand)]
-        command: GroupCommand,
+        command: WorkspaceCommand,
     },
     /// Manage agent skill integrations
     Skill {
@@ -55,26 +55,26 @@ enum Command {
         #[command(subcommand)]
         command: CronCommand,
     },
-    /// Delegate a task to a worker
+    /// Delegate a task to an agent
     Delegate {
-        /// Group name
+        /// Workspace name
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
         /// Continue an existing conversation
         #[arg(long)]
         thread: Option<String>,
-        /// Worker name
-        worker: String,
+        /// Agent name
+        agent: String,
         /// Task (omit to read from stdin)
         task: Option<String>,
     },
     /// Wait for pending task results
     Wait,
-    /// Reply to a worker's question
+    /// Reply to an agent's question
     Reply {
-        /// Group name
+        /// Workspace name
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
         thread_id: String,
         message: String,
     },
@@ -89,60 +89,60 @@ enum Command {
 }
 
 #[derive(Subcommand)]
-enum WorkerCommand {
+enum AgentCommand {
     Add {
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
         name: String,
         #[arg(long, default_value = "")]
         description: String,
         #[arg(long)]
         instructions: String,
         #[arg(long, default_value = "local")]
-        node: String,
+        machine: String,
         /// Runtime: auto (default), claude, or codex
         #[arg(long, default_value = "auto")]
         runtime: String,
     },
     Ls {
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
     },
     Info {
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
         name: String,
     },
     Update {
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
         name: String,
         #[arg(long)]
         instructions: String,
     },
     Remove {
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
         name: String,
     },
     Stop {
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
         name: String,
     },
     Start {
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
         name: String,
     },
     Logs {
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
         name: String,
     },
     Temp {
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
         task: String,
         #[arg(long, default_value = "You are a helpful assistant. Complete the task. Be concise.")]
         instructions: String,
@@ -150,7 +150,7 @@ enum WorkerCommand {
 }
 
 #[derive(Subcommand)]
-enum NodeCommand {
+enum MachineCommand {
     Join {
         server_url: String,
         #[arg(long)]
@@ -162,11 +162,11 @@ enum NodeCommand {
 }
 
 #[derive(Subcommand)]
-enum GroupCommand {
+enum WorkspaceCommand {
     Create { name: String },
     Ls,
     AddMember {
-        group: Option<String>,
+        workspace: Option<String>,
         user_id: String,
     },
 }
@@ -183,9 +183,9 @@ enum CronCommand {
     /// Schedule a recurring task
     Add {
         #[arg(long)]
-        group: Option<String>,
-        /// Worker name
-        worker: String,
+        workspace: Option<String>,
+        /// Agent name
+        agent: String,
         /// Schedule: 30s, 5m, 1h, 6h, 1d
         #[arg(long)]
         every: String,
@@ -195,25 +195,25 @@ enum CronCommand {
     /// List scheduled tasks
     Ls {
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
     },
     /// Remove a scheduled task
     Remove {
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
         /// Cron job ID
         id: String,
     },
     /// Enable a scheduled task
     Enable {
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
         id: String,
     },
     /// Disable a scheduled task
     Disable {
         #[arg(long)]
-        group: Option<String>,
+        workspace: Option<String>,
         id: String,
     },
 }
@@ -275,16 +275,16 @@ fn expand_file_refs(task: &str) -> String {
     result
 }
 
-/// Resolve the group: use explicit --group, or fall back to default_group in config.
-fn resolve_group(explicit: Option<String>) -> String {
-    if let Some(g) = explicit {
-        return g;
+/// Resolve the workspace: use explicit --workspace, or fall back to default_workspace in config.
+fn resolve_workspace(explicit: Option<String>) -> String {
+    if let Some(w) = explicit {
+        return w;
     }
     let cfg = config::CliConfig::load();
-    if let Some(g) = cfg.default_group {
-        return g;
+    if let Some(w) = cfg.default_workspace {
+        return w;
     }
-    eprintln!("Error: --group is required. Set a default with: b0 group switch <name>");
+    eprintln!("Error: --workspace is required. Set a default with: b0 workspace switch <name>");
     std::process::exit(1);
 }
 
@@ -316,98 +316,98 @@ async fn main() {
         Command::Status => cmd_status().await,
         Command::Invite { name } => cmd_invite(&name).await,
 
-        Command::Worker { command } => match command {
-            WorkerCommand::Add { group, name, description, instructions, node, runtime } => { let group = resolve_group(group);
+        Command::Agent { command } => match command {
+            AgentCommand::Add { workspace, name, description, instructions, machine, runtime } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.register_worker(&group, &name, &description, &instructions, &node, &runtime).await {
-                    Ok(w) => println!("Worker \"{}\" registered in group \"{}\" on node \"{}\" (runtime: {}).", w.name, group, w.node_id, w.runtime),
+                match client.register_agent(&workspace, &name, &description, &instructions, &machine, &runtime).await {
+                    Ok(a) => println!("Agent \"{}\" registered in workspace \"{}\" on machine \"{}\" (runtime: {}).", a.name, workspace, a.machine_id, a.runtime),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Ls { group } => { let group = resolve_group(group);
+            AgentCommand::Ls { workspace } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.list_workers(&group).await {
-                    Ok(workers) => {
-                        if workers.is_empty() {
-                            println!("No workers in group \"{}\".", group);
+                match client.list_agents(&workspace).await {
+                    Ok(agents) => {
+                        if agents.is_empty() {
+                            println!("No agents in workspace \"{}\".", workspace);
                         } else {
-                            println!("{:<20} {:<30} {:<10} {:<10} {}", "NAME", "DESCRIPTION", "NODE", "STATUS", "CREATED");
-                            for w in workers {
-                                println!("{:<20} {:<30} {:<10} {:<10} {}", w.name, w.description, w.node_id, w.status, w.created_at.format("%Y-%m-%d %H:%M:%S"));
+                            println!("{:<20} {:<30} {:<10} {:<10} {}", "NAME", "DESCRIPTION", "MACHINE", "STATUS", "CREATED");
+                            for a in agents {
+                                println!("{:<20} {:<30} {:<10} {:<10} {}", a.name, a.description, a.machine_id, a.status, a.created_at.format("%Y-%m-%d %H:%M:%S"));
                             }
                         }
                     }
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Info { group, name } => { let group = resolve_group(group);
+            AgentCommand::Info { workspace, name } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.get_worker(&group, &name).await {
-                    Ok(w) => {
-                        println!("Name:          {}", w.name);
-                        println!("Group:         {}", group);
-                        println!("Node:          {}", w.node_id);
-                        println!("Status:        {}", w.status);
-                        println!("Registered by: {}", if w.registered_by.is_empty() { "(unknown)" } else { &w.registered_by });
-                        println!("Created:       {}", w.created_at.format("%Y-%m-%d %H:%M:%S"));
-                        println!("Instructions:  {}", w.instructions);
+                match client.get_agent(&workspace, &name).await {
+                    Ok(a) => {
+                        println!("Name:          {}", a.name);
+                        println!("Workspace:     {}", workspace);
+                        println!("Machine:       {}", a.machine_id);
+                        println!("Status:        {}", a.status);
+                        println!("Registered by: {}", if a.registered_by.is_empty() { "(unknown)" } else { &a.registered_by });
+                        println!("Created:       {}", a.created_at.format("%Y-%m-%d %H:%M:%S"));
+                        println!("Instructions:  {}", a.instructions);
                     }
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Update { group, name, instructions } => { let group = resolve_group(group);
+            AgentCommand::Update { workspace, name, instructions } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.update_worker(&group, &name, &instructions).await {
-                    Ok(()) => println!("Worker \"{}\" updated.", name),
+                match client.update_agent(&workspace, &name, &instructions).await {
+                    Ok(()) => println!("Agent \"{}\" updated.", name),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Remove { group, name } => { let group = resolve_group(group);
+            AgentCommand::Remove { workspace, name } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.remove_worker(&group, &name).await {
-                    Ok(()) => println!("Worker \"{}\" removed.", name),
+                match client.remove_agent(&workspace, &name).await {
+                    Ok(()) => println!("Agent \"{}\" removed.", name),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Stop { group, name } => { let group = resolve_group(group);
+            AgentCommand::Stop { workspace, name } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.stop_worker(&group, &name).await {
-                    Ok(()) => println!("Worker \"{}\" stopped.", name),
+                match client.stop_agent(&workspace, &name).await {
+                    Ok(()) => println!("Agent \"{}\" stopped.", name),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Start { group, name } => { let group = resolve_group(group);
+            AgentCommand::Start { workspace, name } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.start_worker(&group, &name).await {
-                    Ok(()) => println!("Worker \"{}\" started.", name),
+                match client.start_agent(&workspace, &name).await {
+                    Ok(()) => println!("Agent \"{}\" started.", name),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Logs { group, name } => { let group = resolve_group(group);
+            AgentCommand::Logs { workspace, name } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.worker_logs(&group, &name).await {
+                match client.agent_logs(&workspace, &name).await {
                     Ok(messages) => {
                         if messages.is_empty() {
                             println!("No task history for \"{}\".", name);
                         } else {
                             for msg in messages {
                                 let content = msg.content.as_ref().and_then(|v| v.as_str()).unwrap_or("").chars().take(80).collect::<String>();
-                                println!("{} {} {:<8} {} -> {} {}", msg.created_at.format("%H:%M:%S"), &msg.thread_id, msg.msg_type, msg.from_agent, msg.to_agent, content);
+                                println!("{} {} {:<8} {} -> {} {}", msg.created_at.format("%H:%M:%S"), &msg.thread_id, msg.msg_type, msg.from_id, msg.to_id, content);
                             }
                         }
                     }
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            WorkerCommand::Temp { group, task, instructions } => { let group = resolve_group(group);
+            AgentCommand::Temp { workspace, task, instructions } => { let workspace = resolve_workspace(workspace);
                 let task_content = if !std::io::stdin().is_terminal() {
                     use std::io::Read;
                     let mut buf = String::new();
@@ -421,25 +421,25 @@ async fn main() {
                     task
                 };
                 let task_content = expand_file_refs(&task_content);
-                cmd_worker_temp(&group, &task_content, &instructions).await;
+                cmd_agent_temp(&workspace, &task_content, &instructions).await;
             }
         },
 
-        Command::Node { command } => match command {
-            NodeCommand::Join { server_url, name, key } => {
-                cmd_node_join(&server_url, name.as_deref(), key.as_deref()).await;
+        Command::Machine { command } => match command {
+            MachineCommand::Join { server_url, name, key } => {
+                cmd_machine_join(&server_url, name.as_deref(), key.as_deref()).await;
             }
-            NodeCommand::Ls => {
+            MachineCommand::Ls => {
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.list_nodes().await {
-                    Ok(nodes) => {
-                        if nodes.is_empty() { println!("No nodes."); }
+                match client.list_machines().await {
+                    Ok(machines) => {
+                        if machines.is_empty() { println!("No machines."); }
                         else {
                             println!("{:<20} {:<15} {:<10} {}", "NAME", "OWNER", "STATUS", "LAST HEARTBEAT");
-                            for n in nodes {
-                                let hb = n.last_heartbeat.map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "never".to_string());
-                                println!("{:<20} {:<15} {:<10} {}", n.id, n.owner, n.status, hb);
+                            for m in machines {
+                                let hb = m.last_heartbeat.map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "never".to_string());
+                                println!("{:<20} {:<15} {:<10} {}", m.id, m.owner, m.status, hb);
                             }
                         }
                     }
@@ -448,36 +448,36 @@ async fn main() {
             }
         },
 
-        Command::Group { command } => match command {
-            GroupCommand::Create { name } => {
+        Command::Workspace { command } => match command {
+            WorkspaceCommand::Create { name } => {
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.create_group(&name).await {
-                    Ok(g) => println!("Group \"{}\" created.", g.name),
+                match client.create_workspace(&name).await {
+                    Ok(w) => println!("Workspace \"{}\" created.", w.name),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            GroupCommand::Ls => {
+            WorkspaceCommand::Ls => {
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.list_groups().await {
-                    Ok(groups) => {
-                        if groups.is_empty() { println!("No groups."); }
+                match client.list_workspaces().await {
+                    Ok(workspaces) => {
+                        if workspaces.is_empty() { println!("No workspaces."); }
                         else {
                             println!("{:<20} {:<15} {}", "NAME", "CREATED BY", "CREATED");
-                            for g in groups {
-                                println!("{:<20} {:<15} {}", g.name, g.created_by, g.created_at.format("%Y-%m-%d %H:%M:%S"));
+                            for w in workspaces {
+                                println!("{:<20} {:<15} {}", w.name, w.created_by, w.created_at.format("%Y-%m-%d %H:%M:%S"));
                             }
                         }
                     }
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            GroupCommand::AddMember { group, user_id } => { let group = resolve_group(group);
+            WorkspaceCommand::AddMember { workspace, user_id } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.add_group_member(&group, &user_id).await {
-                    Ok(()) => println!("User {} added to group \"{}\".", user_id, group),
+                match client.add_workspace_member(&workspace, &user_id).await {
+                    Ok(()) => println!("User {} added to workspace \"{}\".", user_id, workspace),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
@@ -513,60 +513,60 @@ async fn main() {
         },
 
         Command::Cron { command } => match command {
-            CronCommand::Add { group, worker, every, task } => { let group = resolve_group(group);
+            CronCommand::Add { workspace, agent, every, task } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.create_cron_job(&group, &worker, &every, &task).await {
-                    Ok(job) => println!("Cron job \"{}\" created. Worker \"{}\" will run every {}.", job.id, worker, every),
+                match client.create_cron_job(&workspace, &agent, &every, &task).await {
+                    Ok(job) => println!("Cron job \"{}\" created. Agent \"{}\" will run every {}.", job.id, agent, every),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            CronCommand::Ls { group } => { let group = resolve_group(group);
+            CronCommand::Ls { workspace } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.list_cron_jobs(&group).await {
+                match client.list_cron_jobs(&workspace).await {
                     Ok(jobs) => {
                         if jobs.is_empty() {
-                            println!("No scheduled tasks in group \"{}\".", group);
+                            println!("No scheduled tasks in workspace \"{}\".", workspace);
                         } else {
-                            println!("{:<16} {:<16} {:<10} {:<8} {:<20} {}", "ID", "WORKER", "SCHEDULE", "ENABLED", "LAST RUN", "TASK");
+                            println!("{:<16} {:<16} {:<10} {:<8} {:<20} {}", "ID", "AGENT", "SCHEDULE", "ENABLED", "LAST RUN", "TASK");
                             for j in jobs {
                                 let last = j.last_run.map(|t| t.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_else(|| "never".to_string());
                                 let task_preview: String = j.task.chars().take(40).collect();
-                                println!("{:<16} {:<16} {:<10} {:<8} {:<20} {}", j.id, j.worker, j.schedule, j.enabled, last, task_preview);
+                                println!("{:<16} {:<16} {:<10} {:<8} {:<20} {}", j.id, j.agent, j.schedule, j.enabled, last, task_preview);
                             }
                         }
                     }
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            CronCommand::Remove { group, id } => { let group = resolve_group(group);
+            CronCommand::Remove { workspace, id } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.remove_cron_job(&group, &id).await {
+                match client.remove_cron_job(&workspace, &id).await {
                     Ok(()) => println!("Cron job \"{}\" removed.", id),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            CronCommand::Enable { group, id } => { let group = resolve_group(group);
+            CronCommand::Enable { workspace, id } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.set_cron_enabled(&group, &id, true).await {
+                match client.set_cron_enabled(&workspace, &id, true).await {
                     Ok(()) => println!("Cron job \"{}\" enabled.", id),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            CronCommand::Disable { group, id } => { let group = resolve_group(group);
+            CronCommand::Disable { workspace, id } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.set_cron_enabled(&group, &id, false).await {
+                match client.set_cron_enabled(&workspace, &id, false).await {
                     Ok(()) => println!("Cron job \"{}\" disabled.", id),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
         },
 
-        Command::Delegate { group, thread, worker, task } => { let group = resolve_group(group);
+        Command::Delegate { workspace, thread, agent, task } => { let workspace = resolve_workspace(workspace);
             let task_content = match task {
                 Some(t) => {
                     if !std::io::stdin().is_terminal() {
@@ -595,13 +595,13 @@ async fn main() {
                 }
             };
             let task_content = expand_file_refs(&task_content);
-            cmd_delegate(&group, &worker, &task_content, thread.as_deref()).await;
+            cmd_delegate(&workspace, &agent, &task_content, thread.as_deref()).await;
         }
 
         Command::Wait => cmd_wait().await,
 
-        Command::Reply { group, thread_id, message } => { let group = resolve_group(group);
-            cmd_reply(&group, &thread_id, &message).await;
+        Command::Reply { workspace, thread_id, message } => { let workspace = resolve_workspace(workspace);
+            cmd_reply(&workspace, &thread_id, &message).await;
         }
     }
 }
@@ -625,11 +625,11 @@ async fn cmd_login(server_url: &str, api_key: Option<&str>) {
     cfg.api_key = api_key.map(|s| s.to_string());
     let _ = cfg.lead_id();
 
-    // Auto-set default_group from user's first group
-    if cfg.default_group.is_none() {
-        if let Ok(groups) = client.list_groups().await {
-            if let Some(first) = groups.first() {
-                cfg.default_group = Some(first.name.clone());
+    // Auto-set default_workspace from user's first workspace
+    if cfg.default_workspace.is_none() {
+        if let Ok(workspaces) = client.list_workspaces().await {
+            if let Some(first) = workspaces.first() {
+                cfg.default_workspace = Some(first.name.clone());
             }
         }
     }
@@ -640,8 +640,8 @@ async fn cmd_login(server_url: &str, api_key: Option<&str>) {
     }
 
     println!("Login complete. Server: {}", url);
-    if let Some(ref g) = cfg.default_group {
-        println!("Default group: {}", g);
+    if let Some(ref w) = cfg.default_workspace {
+        println!("Default workspace: {}", w);
     }
     println!("To install agent skill: b0 skill install claude-code  (or: codex)");
 }
@@ -681,9 +681,9 @@ async fn cmd_status() {
         Err(_) => { println!("Status: disconnected"); return; }
     }
 
-    if let Ok(groups) = client.list_groups().await {
-        println!("Groups: {}", groups.len());
-        for g in &groups { println!("  {}", g.name); }
+    if let Ok(workspaces) = client.list_workspaces().await {
+        println!("Workspaces: {}", workspaces.len());
+        for w in &workspaces { println!("  {}", w.name); }
     }
 
     let pending = config::CliConfig::load_pending();
@@ -692,7 +692,7 @@ async fn cmd_status() {
     } else {
         println!("Pending tasks: {}", pending.threads.len());
         for (tid, info) in &pending.threads {
-            println!("  {} -> {} ({})", tid, info.worker, info.group);
+            println!("  {} -> {} ({})", tid, info.agent, info.workspace);
         }
     }
 }
@@ -710,25 +710,23 @@ async fn cmd_invite(name: &str) {
     }
 }
 
-async fn cmd_worker_temp(group: &str, task: &str, instructions: &str) {
+async fn cmd_agent_temp(workspace: &str, task: &str, instructions: &str) {
     let mut cfg = config::CliConfig::load();
     let lead_id = cfg.lead_id();
     let client = make_client(&cfg);
 
     let temp_name = format!("temp-{}", &uuid::Uuid::new_v4().to_string()[..8]);
-    if let Err(e) = client.register_worker(group, &temp_name, "", instructions, "local", "auto").await {
+    if let Err(e) = client.register_agent(workspace, &temp_name, "", instructions, "local", "auto").await {
         eprintln!("Error: {}", e); std::process::exit(1);
     }
 
-    let _ = client.register_agent(group, &lead_id).await;
-
     let thread_id = format!("thread-{}", &uuid::Uuid::new_v4().to_string()[..8]);
-    match client.send_message(group, &temp_name, &thread_id, &lead_id, "request", Some(&serde_json::json!(task))).await {
+    match client.send_message(workspace, &temp_name, &thread_id, &lead_id, "request", Some(&serde_json::json!(task))).await {
         Ok(_) => {
             let mut pending = config::CliConfig::load_pending();
             pending.threads.insert(thread_id.clone(), config::PendingThread {
-                worker: temp_name,
-                group: group.to_string(),
+                agent: temp_name,
+                workspace: workspace.to_string(),
                 task: task.to_string(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 temp: true,
@@ -737,24 +735,20 @@ async fn cmd_worker_temp(group: &str, task: &str, instructions: &str) {
             println!("{}", thread_id);
         }
         Err(e) => {
-            let _ = client.remove_worker(group, &temp_name).await;
+            let _ = client.remove_agent(workspace, &temp_name).await;
             eprintln!("Error: {}", e); std::process::exit(1);
         }
     }
 }
 
-async fn cmd_delegate(group: &str, worker: &str, task: &str, continue_thread: Option<&str>) {
+async fn cmd_delegate(workspace: &str, agent: &str, task: &str, continue_thread: Option<&str>) {
     let mut cfg = config::CliConfig::load();
     let lead_id = cfg.lead_id();
     let client = make_client(&cfg);
 
-    if let Err(e) = client.get_worker(group, worker).await {
-        eprintln!("Error: worker \"{}\" not found in group \"{}\". {}", worker, group, e);
+    if let Err(e) = client.get_agent(workspace, agent).await {
+        eprintln!("Error: agent \"{}\" not found in workspace \"{}\". {}", agent, workspace, e);
         std::process::exit(1);
-    }
-
-    if let Err(e) = client.register_agent(group, &lead_id).await {
-        eprintln!("Error registering lead agent: {}", e); std::process::exit(1);
     }
 
     // Reuse thread for multi-turn, or create new
@@ -766,12 +760,12 @@ async fn cmd_delegate(group: &str, worker: &str, task: &str, continue_thread: Op
     // For continuing a conversation, send as "answer" so daemon uses --resume
     let msg_type = if continue_thread.is_some() { "answer" } else { "request" };
 
-    match client.send_message(group, worker, &thread_id, &lead_id, msg_type, Some(&serde_json::json!(task))).await {
+    match client.send_message(workspace, agent, &thread_id, &lead_id, msg_type, Some(&serde_json::json!(task))).await {
         Ok(_) => {
             let mut pending = config::CliConfig::load_pending();
             pending.threads.insert(thread_id.clone(), config::PendingThread {
-                worker: worker.to_string(),
-                group: group.to_string(),
+                agent: agent.to_string(),
+                workspace: workspace.to_string(),
                 task: task.to_string(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 temp: false,
@@ -797,10 +791,10 @@ async fn cmd_wait() {
     let total = pending.threads.len();
     println!("Waiting for {} task(s)...\n", total);
 
-    // Track per-worker status: "queued" or "running"
+    // Track per-agent status: "queued" or "running"
     let mut status: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
     for info in pending.threads.values() {
-        status.insert(info.worker.clone(), "queued");
+        status.insert(info.agent.clone(), "queued");
     }
 
     let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
@@ -815,10 +809,10 @@ async fn cmd_wait() {
             break;
         }
 
-        let groups: Vec<String> = pending.threads.values().map(|t| t.group.clone()).collect::<std::collections::HashSet<_>>().into_iter().collect();
+        let workspaces: Vec<String> = pending.threads.values().map(|t| t.workspace.clone()).collect::<std::collections::HashSet<_>>().into_iter().collect();
 
-        for group in &groups {
-            let messages = match client.get_inbox(group, &lead_id, Some("unread"), Some(2.0)).await {
+        for workspace in &workspaces {
+            let messages = match client.get_inbox(workspace, &lead_id, Some("unread"), Some(2.0)).await {
                 Ok(m) => m,
                 Err(_) => continue,
             };
@@ -831,36 +825,36 @@ async fn cmd_wait() {
 
                     let content = msg.content.as_ref().and_then(|v| v.as_str()).unwrap_or("(no content)");
                     let is_temp = thread_info.temp;
-                    let worker_name = thread_info.worker.clone();
-                    let thread_group = thread_info.group.clone();
+                    let agent_name = thread_info.agent.clone();
+                    let thread_workspace = thread_info.workspace.clone();
 
                     match msg.msg_type.as_str() {
                         "started" => {
-                            status.insert(worker_name.clone(), "running");
+                            status.insert(agent_name.clone(), "running");
                             // Clear and reprint status
                             clear_status(is_tty, status_lines_printed);
                             status_lines_printed = 0;
                             print_status(&status, &pending, is_tty, &mut status_lines_printed);
                         }
                         "done" => {
-                            status.remove(&worker_name);
+                            status.remove(&agent_name);
                             clear_status(is_tty, status_lines_printed);
                             status_lines_printed = 0;
-                            println!("{} done ({}): {}", worker_name, elapsed, content);
+                            println!("{} done ({}): {}", agent_name, elapsed, content);
                             pending.threads.remove(&msg.thread_id);
-                            if is_temp { let _ = client.remove_worker(&thread_group, &worker_name).await; }
+                            if is_temp { let _ = client.remove_agent(&thread_workspace, &agent_name).await; }
                             if !pending.threads.is_empty() {
                                 println!();
                                 print_status(&status, &pending, is_tty, &mut status_lines_printed);
                             }
                         }
                         "failed" => {
-                            status.remove(&worker_name);
+                            status.remove(&agent_name);
                             clear_status(is_tty, status_lines_printed);
                             status_lines_printed = 0;
-                            eprintln!("{} failed ({}): {}", worker_name, elapsed, content);
+                            eprintln!("{} failed ({}): {}", agent_name, elapsed, content);
                             pending.threads.remove(&msg.thread_id);
-                            if is_temp { let _ = client.remove_worker(&thread_group, &worker_name).await; }
+                            if is_temp { let _ = client.remove_agent(&thread_workspace, &agent_name).await; }
                             if !pending.threads.is_empty() {
                                 println!();
                                 print_status(&status, &pending, is_tty, &mut status_lines_printed);
@@ -869,14 +863,14 @@ async fn cmd_wait() {
                         "question" => {
                             clear_status(is_tty, status_lines_printed);
                             status_lines_printed = 0;
-                            println!("\n{} asks (thread {}): {}\n  -> Use: b0 reply --group {} {} \"<your answer>\"",
-                                worker_name, msg.thread_id, content, thread_group, msg.thread_id);
+                            println!("\n{} asks (thread {}): {}\n  -> Use: b0 reply --workspace {} {} \"<your answer>\"",
+                                agent_name, msg.thread_id, content, thread_workspace, msg.thread_id);
                             print_status(&status, &pending, is_tty, &mut status_lines_printed);
                         }
                         _ => {}
                     }
                 }
-                let _ = client.ack_message(group, &msg.id).await;
+                let _ = client.ack_message(workspace, &msg.id).await;
             }
         }
 
@@ -898,7 +892,7 @@ fn print_status(
     lines_printed: &mut usize,
 ) {
     for info in pending.threads.values() {
-        let state = status.get(info.worker.as_str()).copied().unwrap_or("queued");
+        let state = status.get(info.agent.as_str()).copied().unwrap_or("queued");
         let elapsed = if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&info.created_at) {
             let secs = (chrono::Utc::now() - created.with_timezone(&chrono::Utc)).num_seconds();
             format!("{}s", secs)
@@ -909,7 +903,7 @@ fn print_status(
             "running" => "...",
             _ => "   ",
         };
-        eprintln!("  {:<16} {} ({}){}", info.worker, state, elapsed, indicator);
+        eprintln!("  {:<16} {} ({}){}", info.agent, state, elapsed, indicator);
         *lines_printed += 1;
     }
 }
@@ -924,50 +918,50 @@ fn clear_status(is_tty: bool, lines: usize) {
     }
 }
 
-async fn cmd_reply(group: &str, thread_id: &str, message: &str) {
+async fn cmd_reply(workspace: &str, thread_id: &str, message: &str) {
     let mut cfg = config::CliConfig::load();
     let lead_id = cfg.lead_id();
     let client = make_client(&cfg);
 
-    // Try pending first, then fall back to requiring --worker
+    // Try pending first, then fall back to requiring --agent
     let pending = config::CliConfig::load_pending();
-    let worker = match pending.threads.get(thread_id) {
-        Some(t) => t.worker.clone(),
+    let agent = match pending.threads.get(thread_id) {
+        Some(t) => t.agent.clone(),
         None => {
-            // Look up worker from thread history
-            eprintln!("Error: thread \"{}\" not found. Use: b0 delegate --thread {} <worker> \"<message>\"", thread_id, thread_id);
+            // Look up agent from thread history
+            eprintln!("Error: thread \"{}\" not found. Use: b0 delegate --thread {} <agent> \"<message>\"", thread_id, thread_id);
             std::process::exit(1);
         }
     };
 
-    // Send as "answer" and re-add to pending for bh wait
-    match client.send_message(group, &worker, thread_id, &lead_id, "answer", Some(&serde_json::json!(message))).await {
+    // Send as "answer" and re-add to pending for b0 wait
+    match client.send_message(workspace, &agent, thread_id, &lead_id, "answer", Some(&serde_json::json!(message))).await {
         Ok(_) => {
             // Re-add to pending so b0 wait can collect the response
             let mut pending = config::CliConfig::load_pending();
             pending.threads.insert(thread_id.to_string(), config::PendingThread {
-                worker: worker.clone(),
-                group: group.to_string(),
+                agent: agent.clone(),
+                workspace: workspace.to_string(),
                 task: message.to_string(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 temp: false,
             });
             let _ = config::CliConfig::save_pending(&pending);
-            println!("Reply sent to {} (thread {}). Run b0 wait to collect response.", worker, thread_id);
+            println!("Reply sent to {} (thread {}). Run b0 wait to collect response.", agent, thread_id);
         }
         Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
     }
 }
 
-async fn cmd_node_join(server_url: &str, name: Option<&str>, api_key: Option<&str>) {
-    let node_id = name.map(|s| s.to_string()).unwrap_or_else(|| {
-        format!("node-{}", &uuid::Uuid::new_v4().to_string()[..8])
+async fn cmd_machine_join(server_url: &str, name: Option<&str>, api_key: Option<&str>) {
+    let machine_id = name.map(|s| s.to_string()).unwrap_or_else(|| {
+        format!("machine-{}", &uuid::Uuid::new_v4().to_string()[..8])
     });
 
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
         .init();
 
-    println!("Joining as node \"{}\" -> {}", node_id, server_url);
-    daemon::run_remote(server_url, &node_id, api_key).await;
+    println!("Joining as machine \"{}\" -> {}", machine_id, server_url);
+    daemon::run_remote(server_url, &machine_id, api_key).await;
 }

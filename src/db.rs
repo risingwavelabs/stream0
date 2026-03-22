@@ -20,18 +20,10 @@ pub struct User {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Group {
+pub struct Workspace {
     pub name: String,
     pub created_by: String,
     pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Agent {
-    pub id: String,
-    pub created_at: DateTime<Utc>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_seen: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,9 +31,9 @@ pub struct InboxMessage {
     pub id: String,
     pub thread_id: String,
     #[serde(rename = "from")]
-    pub from_agent: String,
+    pub from_id: String,
     #[serde(rename = "to")]
-    pub to_agent: String,
+    pub to_id: String,
     #[serde(rename = "type")]
     pub msg_type: String,
     pub content: Option<serde_json::Value>,
@@ -50,11 +42,11 @@ pub struct InboxMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Worker {
+pub struct Agent {
     pub name: String,
     pub description: String,
     pub instructions: String,
-    pub node_id: String,
+    pub machine_id: String,
     pub runtime: String,
     pub status: String,
     pub registered_by: String,
@@ -62,7 +54,7 @@ pub struct Worker {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Node {
+pub struct Machine {
     pub id: String,
     pub owner: String,
     pub status: String,
@@ -72,8 +64,8 @@ pub struct Node {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CronJob {
     pub id: String,
-    pub group_name: String,
-    pub worker: String,
+    pub workspace_name: String,
+    pub agent: String,
     pub schedule: String,
     pub task: String,
     pub enabled: bool,
@@ -109,41 +101,33 @@ impl Database {
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             );
 
-            CREATE TABLE IF NOT EXISTS groups (
+            CREATE TABLE IF NOT EXISTS workspaces (
                 name TEXT NOT NULL PRIMARY KEY,
                 created_by TEXT NOT NULL,
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             );
 
-            CREATE TABLE IF NOT EXISTS group_members (
-                group_name TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS workspace_members (
+                workspace_name TEXT NOT NULL,
                 user_id TEXT NOT NULL,
-                PRIMARY KEY (group_name, user_id),
-                FOREIGN KEY (group_name) REFERENCES groups(name),
+                PRIMARY KEY (workspace_name, user_id),
+                FOREIGN KEY (workspace_name) REFERENCES workspaces(name),
                 FOREIGN KEY (user_id) REFERENCES users(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS agents (
-                group_name TEXT NOT NULL,
-                id TEXT NOT NULL,
-                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-                last_seen TEXT,
-                PRIMARY KEY (group_name, id)
             );
 
             CREATE TABLE IF NOT EXISTS inbox_messages (
                 id TEXT PRIMARY KEY,
-                group_name TEXT NOT NULL,
+                workspace_name TEXT NOT NULL,
                 thread_id TEXT NOT NULL,
-                from_agent TEXT NOT NULL,
-                to_agent TEXT NOT NULL,
+                from_id TEXT NOT NULL,
+                to_id TEXT NOT NULL,
                 type TEXT NOT NULL,
                 content TEXT,
                 status TEXT NOT NULL DEFAULT 'unread',
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             );
 
-            CREATE TABLE IF NOT EXISTS nodes (
+            CREATE TABLE IF NOT EXISTS machines (
                 id TEXT NOT NULL PRIMARY KEY,
                 owner TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'online',
@@ -151,26 +135,26 @@ impl Database {
                 FOREIGN KEY (owner) REFERENCES users(id)
             );
 
-            CREATE TABLE IF NOT EXISTS workers (
-                group_name TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS agents (
+                workspace_name TEXT NOT NULL,
                 name TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 instructions TEXT NOT NULL,
-                node_id TEXT NOT NULL DEFAULT 'local',
+                machine_id TEXT NOT NULL DEFAULT 'local',
                 runtime TEXT NOT NULL DEFAULT 'auto',
                 status TEXT NOT NULL DEFAULT 'active',
                 registered_by TEXT NOT NULL DEFAULT '',
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-                PRIMARY KEY (group_name, name)
+                PRIMARY KEY (workspace_name, name)
             );
 
-            CREATE INDEX IF NOT EXISTS idx_inbox_group_to_status ON inbox_messages(group_name, to_agent, status);
-            CREATE INDEX IF NOT EXISTS idx_inbox_group_thread ON inbox_messages(group_name, thread_id);
+            CREATE INDEX IF NOT EXISTS idx_inbox_workspace_to_status ON inbox_messages(workspace_name, to_id, status);
+            CREATE INDEX IF NOT EXISTS idx_inbox_workspace_thread ON inbox_messages(workspace_name, thread_id);
 
             CREATE TABLE IF NOT EXISTS cron_jobs (
                 id TEXT PRIMARY KEY,
-                group_name TEXT NOT NULL,
-                worker TEXT NOT NULL,
+                workspace_name TEXT NOT NULL,
+                agent TEXT NOT NULL,
                 schedule TEXT NOT NULL,
                 task TEXT NOT NULL,
                 enabled INTEGER NOT NULL DEFAULT 1,
@@ -209,13 +193,13 @@ impl Database {
             params![id, name, key, is_admin as i32],
         )?;
 
-        // Auto-create personal group
+        // Auto-create personal workspace
         conn.execute(
-            "INSERT INTO groups (name, created_by) VALUES (?1, ?2)",
+            "INSERT INTO workspaces (name, created_by) VALUES (?1, ?2)",
             params![name, id],
         )?;
         conn.execute(
-            "INSERT INTO group_members (group_name, user_id) VALUES (?1, ?2)",
+            "INSERT INTO workspace_members (workspace_name, user_id) VALUES (?1, ?2)",
             params![name, id],
         )?;
 
@@ -304,121 +288,76 @@ impl Database {
         Ok(Some(self.create_user("admin", true)?))
     }
 
-    // --- Groups ---
+    // --- Workspaces ---
 
-    pub fn create_group(&self, name: &str, created_by: &str) -> Result<Group> {
+    pub fn create_workspace(&self, name: &str, created_by: &str) -> Result<Workspace> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO groups (name, created_by) VALUES (?1, ?2)",
+            "INSERT INTO workspaces (name, created_by) VALUES (?1, ?2)",
             params![name, created_by],
         )?;
         // Creator is automatically a member
         conn.execute(
-            "INSERT INTO group_members (group_name, user_id) VALUES (?1, ?2)",
+            "INSERT INTO workspace_members (workspace_name, user_id) VALUES (?1, ?2)",
             params![name, created_by],
         )?;
         let ts: String = conn.query_row(
-            "SELECT created_at FROM groups WHERE name = ?1",
+            "SELECT created_at FROM workspaces WHERE name = ?1",
             params![name],
             |row| row.get(0),
         )?;
-        Ok(Group {
+        Ok(Workspace {
             name: name.to_string(),
             created_by: created_by.to_string(),
             created_at: Self::parse_ts(&ts),
         })
     }
 
-    pub fn add_group_member(&self, group_name: &str, user_id: &str) -> Result<()> {
+    pub fn add_workspace_member(&self, workspace_name: &str, user_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR IGNORE INTO group_members (group_name, user_id) VALUES (?1, ?2)",
-            params![group_name, user_id],
+            "INSERT OR IGNORE INTO workspace_members (workspace_name, user_id) VALUES (?1, ?2)",
+            params![workspace_name, user_id],
         )?;
         Ok(())
     }
 
-    pub fn list_groups_for_user(&self, user_id: &str) -> Result<Vec<Group>> {
+    pub fn list_workspaces_for_user(&self, user_id: &str) -> Result<Vec<Workspace>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT g.name, g.created_by, g.created_at FROM groups g
-             JOIN group_members gm ON g.name = gm.group_name
-             WHERE gm.user_id = ?1 ORDER BY g.name ASC",
+            "SELECT w.name, w.created_by, w.created_at FROM workspaces w
+             JOIN workspace_members wm ON w.name = wm.workspace_name
+             WHERE wm.user_id = ?1 ORDER BY w.name ASC",
         )?;
-        let groups = stmt
+        let workspaces = stmt
             .query_map(params![user_id], |row| {
                 let ts: String = row.get(2)?;
-                Ok(Group {
+                Ok(Workspace {
                     name: row.get(0)?,
                     created_by: row.get(1)?,
                     created_at: Database::parse_ts(&ts),
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(groups)
+        Ok(workspaces)
     }
 
-    pub fn is_group_member(&self, group_name: &str, user_id: &str) -> Result<bool> {
+    pub fn is_workspace_member(&self, workspace_name: &str, user_id: &str) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT COUNT(*) FROM group_members WHERE group_name = ?1 AND user_id = ?2",
-            params![group_name, user_id],
+            "SELECT COUNT(*) FROM workspace_members WHERE workspace_name = ?1 AND user_id = ?2",
+            params![workspace_name, user_id],
             |row| row.get::<_, i64>(0),
         )
         .map(|c| c > 0)
         .map_err(Into::into)
     }
 
-    // --- Agents (inbox identities) ---
-
-    pub fn register_agent(&self, group_name: &str, id: &str) -> Result<Agent> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT OR IGNORE INTO agents (group_name, id) VALUES (?1, ?2)",
-            params![group_name, id],
-        )?;
-        let ts: String = conn.query_row(
-            "SELECT created_at FROM agents WHERE group_name = ?1 AND id = ?2",
-            params![group_name, id],
-            |row| row.get(0),
-        )?;
-        Ok(Agent {
-            id: id.to_string(),
-            created_at: Database::parse_ts(&ts),
-            last_seen: None,
-        })
-    }
-
-    pub fn resolve_agent(&self, group_name: &str, id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
-        let exists: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM agents WHERE group_name = ?1 AND id = ?2",
-                params![group_name, id],
-                |row| row.get::<_, i64>(0),
-            )
-            .map(|c| c > 0)?;
-        if exists {
-            Ok(Some(id.to_string()))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn update_last_seen(&self, group_name: &str, agent_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "UPDATE agents SET last_seen = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE group_name = ?1 AND id = ?2",
-            params![group_name, agent_id],
-        )?;
-        Ok(())
-    }
-
     // --- Inbox Messages ---
 
     pub fn send_inbox_message(
         &self,
-        group_name: &str,
+        workspace_name: &str,
         thread_id: &str,
         from: &str,
         to: &str,
@@ -430,8 +369,8 @@ impl Database {
         let content_str = content.map(|c| serde_json::to_string(c).unwrap_or_default());
 
         conn.execute(
-            "INSERT INTO inbox_messages (id, group_name, thread_id, from_agent, to_agent, type, content) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![msg_id, group_name, thread_id, from, to, msg_type, content_str],
+            "INSERT INTO inbox_messages (id, workspace_name, thread_id, from_id, to_id, type, content) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![msg_id, workspace_name, thread_id, from, to, msg_type, content_str],
         )?;
 
         let ts: String = conn.query_row(
@@ -443,8 +382,8 @@ impl Database {
         Ok(InboxMessage {
             id: msg_id,
             thread_id: thread_id.to_string(),
-            from_agent: from.to_string(),
-            to_agent: to.to_string(),
+            from_id: from.to_string(),
+            to_id: to.to_string(),
             msg_type: msg_type.to_string(),
             content: content.cloned(),
             status: "unread".to_string(),
@@ -454,17 +393,17 @@ impl Database {
 
     pub fn get_inbox_messages(
         &self,
-        group_name: &str,
+        workspace_name: &str,
         agent_id: &str,
         status: Option<&str>,
         thread_id: Option<&str>,
     ) -> Result<Vec<InboxMessage>> {
         let conn = self.conn.lock().unwrap();
         let mut query =
-            "SELECT id, thread_id, from_agent, to_agent, type, content, status, created_at FROM inbox_messages WHERE group_name = ?1 AND to_agent = ?2"
+            "SELECT id, thread_id, from_id, to_id, type, content, status, created_at FROM inbox_messages WHERE workspace_name = ?1 AND to_id = ?2"
                 .to_string();
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
-            vec![Box::new(group_name.to_string()), Box::new(agent_id.to_string())];
+            vec![Box::new(workspace_name.to_string()), Box::new(agent_id.to_string())];
         let mut param_idx = 3;
 
         if let Some(s) = status {
@@ -488,8 +427,8 @@ impl Database {
                 Ok(InboxMessage {
                     id: row.get(0)?,
                     thread_id: row.get(1)?,
-                    from_agent: row.get(2)?,
-                    to_agent: row.get(3)?,
+                    from_id: row.get(2)?,
+                    to_id: row.get(3)?,
                     msg_type: row.get(4)?,
                     content: content_str.and_then(|s| serde_json::from_str(&s).ok()),
                     status: row.get(6)?,
@@ -500,11 +439,11 @@ impl Database {
         Ok(messages)
     }
 
-    pub fn ack_inbox_message(&self, group_name: &str, message_id: &str) -> Result<()> {
+    pub fn ack_inbox_message(&self, workspace_name: &str, message_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let updated = conn.execute(
-            "UPDATE inbox_messages SET status = 'acked' WHERE id = ?1 AND group_name = ?2 AND status = 'unread'",
-            params![message_id, group_name],
+            "UPDATE inbox_messages SET status = 'acked' WHERE id = ?1 AND workspace_name = ?2 AND status = 'unread'",
+            params![message_id, workspace_name],
         )?;
         if updated == 0 {
             anyhow::bail!("message not found or already acked");
@@ -514,23 +453,23 @@ impl Database {
 
     pub fn get_thread_messages(
         &self,
-        group_name: &str,
+        workspace_name: &str,
         thread_id: &str,
     ) -> Result<Vec<InboxMessage>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, thread_id, from_agent, to_agent, type, content, status, created_at
-             FROM inbox_messages WHERE group_name = ?1 AND thread_id = ?2 ORDER BY created_at ASC",
+            "SELECT id, thread_id, from_id, to_id, type, content, status, created_at
+             FROM inbox_messages WHERE workspace_name = ?1 AND thread_id = ?2 ORDER BY created_at ASC",
         )?;
         let messages = stmt
-            .query_map(params![group_name, thread_id], |row| {
+            .query_map(params![workspace_name, thread_id], |row| {
                 let content_str: Option<String> = row.get(5)?;
                 let ts: String = row.get(7)?;
                 Ok(InboxMessage {
                     id: row.get(0)?,
                     thread_id: row.get(1)?,
-                    from_agent: row.get(2)?,
-                    to_agent: row.get(3)?,
+                    from_id: row.get(2)?,
+                    to_id: row.get(3)?,
                     msg_type: row.get(4)?,
                     content: content_str.and_then(|s| serde_json::from_str(&s).ok()),
                     status: row.get(6)?,
@@ -541,15 +480,15 @@ impl Database {
         Ok(messages)
     }
 
-    // --- Nodes ---
+    // --- Machines ---
 
-    pub fn register_node(&self, id: &str, owner: &str) -> Result<Node> {
+    pub fn register_machine(&self, id: &str, owner: &str) -> Result<Machine> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO nodes (id, owner, status, last_heartbeat) VALUES (?1, ?2, 'online', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+            "INSERT OR REPLACE INTO machines (id, owner, status, last_heartbeat) VALUES (?1, ?2, 'online', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
             params![id, owner],
         )?;
-        Ok(Node {
+        Ok(Machine {
             id: id.to_string(),
             owner: owner.to_string(),
             status: "online".to_string(),
@@ -557,15 +496,15 @@ impl Database {
         })
     }
 
-    pub fn list_nodes(&self) -> Result<Vec<Node>> {
+    pub fn list_machines(&self) -> Result<Vec<Machine>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, owner, status, last_heartbeat FROM nodes ORDER BY id ASC",
+            "SELECT id, owner, status, last_heartbeat FROM machines ORDER BY id ASC",
         )?;
-        let nodes = stmt
+        let machines = stmt
             .query_map([], |row| {
                 let hb: Option<String> = row.get(3)?;
-                Ok(Node {
+                Ok(Machine {
                     id: row.get(0)?,
                     owner: row.get(1)?,
                     status: row.get(2)?,
@@ -573,38 +512,38 @@ impl Database {
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(nodes)
+        Ok(machines)
     }
 
-    pub fn get_node_owner(&self, node_id: &str) -> Result<Option<String>> {
+    pub fn get_machine_owner(&self, machine_id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT owner FROM nodes WHERE id = ?1",
-            params![node_id],
+            "SELECT owner FROM machines WHERE id = ?1",
+            params![machine_id],
             |row| row.get::<_, String>(0),
         )
         .optional()
         .map_err(Into::into)
     }
 
-    pub fn heartbeat_node(&self, id: &str) -> Result<()> {
+    pub fn heartbeat_machine(&self, id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE nodes SET last_heartbeat = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), status = 'online' WHERE id = ?1",
+            "UPDATE machines SET last_heartbeat = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), status = 'online' WHERE id = ?1",
             params![id],
         )?;
         Ok(())
     }
 
-    // --- Workers ---
+    // --- Agents ---
 
-    fn parse_worker_row(row: &rusqlite::Row) -> rusqlite::Result<Worker> {
+    fn parse_agent_row(row: &rusqlite::Row) -> rusqlite::Result<Agent> {
         let ts: String = row.get(7)?;
-        Ok(Worker {
+        Ok(Agent {
             name: row.get(0)?,
             description: row.get(1)?,
             instructions: row.get(2)?,
-            node_id: row.get(3)?,
+            machine_id: row.get(3)?,
             runtime: row.get(4)?,
             status: row.get(5)?,
             registered_by: row.get(6)?,
@@ -612,44 +551,36 @@ impl Database {
         })
     }
 
-    const WORKER_COLS: &str = "name, description, instructions, node_id, runtime, status, registered_by, created_at";
+    const AGENT_COLS: &str = "name, description, instructions, machine_id, runtime, status, registered_by, created_at";
 
-    pub fn register_worker(
+    pub fn register_agent(
         &self,
-        group_name: &str,
+        workspace_name: &str,
         name: &str,
         description: &str,
         instructions: &str,
-        node_id: &str,
+        machine_id: &str,
         runtime: &str,
         registered_by: &str,
-    ) -> Result<Worker> {
+    ) -> Result<Agent> {
         let conn = self.conn.lock().unwrap();
-        let tx = conn.unchecked_transaction()?;
 
-        tx.execute(
-            "INSERT OR IGNORE INTO agents (group_name, id) VALUES (?1, ?2)",
-            params![group_name, name],
+        conn.execute(
+            "INSERT INTO agents (workspace_name, name, description, instructions, machine_id, runtime, registered_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![workspace_name, name, description, instructions, machine_id, runtime, registered_by],
         )?;
-
-        tx.execute(
-            "INSERT INTO workers (group_name, name, description, instructions, node_id, runtime, registered_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![group_name, name, description, instructions, node_id, runtime, registered_by],
-        )?;
-
-        tx.commit()?;
 
         let ts: String = conn.query_row(
-            "SELECT created_at FROM workers WHERE group_name = ?1 AND name = ?2",
-            params![group_name, name],
+            "SELECT created_at FROM agents WHERE workspace_name = ?1 AND name = ?2",
+            params![workspace_name, name],
             |row| row.get(0),
         )?;
 
-        Ok(Worker {
+        Ok(Agent {
             name: name.to_string(),
             description: description.to_string(),
             instructions: instructions.to_string(),
-            node_id: node_id.to_string(),
+            machine_id: machine_id.to_string(),
             runtime: runtime.to_string(),
             status: "active".to_string(),
             registered_by: registered_by.to_string(),
@@ -657,31 +588,31 @@ impl Database {
         })
     }
 
-    pub fn list_workers(&self, group_name: &str) -> Result<Vec<Worker>> {
+    pub fn list_agents(&self, workspace_name: &str) -> Result<Vec<Agent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            &format!("SELECT {} FROM workers WHERE group_name = ?1 ORDER BY created_at ASC", Self::WORKER_COLS),
+            &format!("SELECT {} FROM agents WHERE workspace_name = ?1 ORDER BY created_at ASC", Self::AGENT_COLS),
         )?;
-        let workers = stmt
-            .query_map(params![group_name], Self::parse_worker_row)?
+        let agents = stmt
+            .query_map(params![workspace_name], Self::parse_agent_row)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(workers)
+        Ok(agents)
     }
 
-    pub fn get_worker(&self, group_name: &str, name: &str) -> Result<Option<Worker>> {
+    pub fn get_agent(&self, workspace_name: &str, name: &str) -> Result<Option<Agent>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            &format!("SELECT {} FROM workers WHERE group_name = ?1 AND name = ?2", Self::WORKER_COLS),
-            params![group_name, name],
-            Self::parse_worker_row,
+            &format!("SELECT {} FROM agents WHERE workspace_name = ?1 AND name = ?2", Self::AGENT_COLS),
+            params![workspace_name, name],
+            Self::parse_agent_row,
         )
         .optional()
         .map_err(Into::into)
     }
 
-    pub fn remove_worker(
+    pub fn remove_agent(
         &self,
-        group_name: &str,
+        workspace_name: &str,
         name: &str,
         user_id: &str,
     ) -> Result<()> {
@@ -690,40 +621,32 @@ impl Database {
         if !user_id.is_empty() {
             let owner: String = conn
                 .query_row(
-                    "SELECT registered_by FROM workers WHERE group_name = ?1 AND name = ?2",
-                    params![group_name, name],
+                    "SELECT registered_by FROM agents WHERE workspace_name = ?1 AND name = ?2",
+                    params![workspace_name, name],
                     |row| row.get(0),
                 )
                 .optional()?
-                .ok_or_else(|| anyhow::anyhow!("worker not found"))?;
+                .ok_or_else(|| anyhow::anyhow!("agent not found"))?;
 
             if owner != user_id {
-                anyhow::bail!("permission denied: worker was created by someone else");
+                anyhow::bail!("permission denied: agent was created by someone else");
             }
         }
 
-        let tx = conn.unchecked_transaction()?;
-
-        let deleted = tx.execute(
-            "DELETE FROM workers WHERE group_name = ?1 AND name = ?2",
-            params![group_name, name],
+        let deleted = conn.execute(
+            "DELETE FROM agents WHERE workspace_name = ?1 AND name = ?2",
+            params![workspace_name, name],
         )?;
         if deleted == 0 {
-            anyhow::bail!("worker not found");
+            anyhow::bail!("agent not found");
         }
 
-        tx.execute(
-            "DELETE FROM agents WHERE group_name = ?1 AND id = ?2",
-            params![group_name, name],
-        )?;
-
-        tx.commit()?;
         Ok(())
     }
 
-    pub fn update_worker_instructions(
+    pub fn update_agent_instructions(
         &self,
-        group_name: &str,
+        workspace_name: &str,
         name: &str,
         instructions: &str,
         user_id: &str,
@@ -733,31 +656,31 @@ impl Database {
         if !user_id.is_empty() {
             let owner: String = conn
                 .query_row(
-                    "SELECT registered_by FROM workers WHERE group_name = ?1 AND name = ?2",
-                    params![group_name, name],
+                    "SELECT registered_by FROM agents WHERE workspace_name = ?1 AND name = ?2",
+                    params![workspace_name, name],
                     |row| row.get(0),
                 )
                 .optional()?
-                .ok_or_else(|| anyhow::anyhow!("worker not found"))?;
+                .ok_or_else(|| anyhow::anyhow!("agent not found"))?;
 
             if owner != user_id {
-                anyhow::bail!("permission denied: worker was created by someone else");
+                anyhow::bail!("permission denied: agent was created by someone else");
             }
         }
 
         let updated = conn.execute(
-            "UPDATE workers SET instructions = ?3 WHERE group_name = ?1 AND name = ?2",
-            params![group_name, name, instructions],
+            "UPDATE agents SET instructions = ?3 WHERE workspace_name = ?1 AND name = ?2",
+            params![workspace_name, name, instructions],
         )?;
         if updated == 0 {
-            anyhow::bail!("worker not found");
+            anyhow::bail!("agent not found");
         }
         Ok(())
     }
 
-    pub fn set_worker_status(
+    pub fn set_agent_status(
         &self,
-        group_name: &str,
+        workspace_name: &str,
         name: &str,
         status: &str,
         user_id: &str,
@@ -767,49 +690,49 @@ impl Database {
         if !user_id.is_empty() {
             let owner: String = conn
                 .query_row(
-                    "SELECT registered_by FROM workers WHERE group_name = ?1 AND name = ?2",
-                    params![group_name, name],
+                    "SELECT registered_by FROM agents WHERE workspace_name = ?1 AND name = ?2",
+                    params![workspace_name, name],
                     |row| row.get(0),
                 )
                 .optional()?
-                .ok_or_else(|| anyhow::anyhow!("worker not found"))?;
+                .ok_or_else(|| anyhow::anyhow!("agent not found"))?;
 
             if owner != user_id {
-                anyhow::bail!("permission denied: worker was created by someone else");
+                anyhow::bail!("permission denied: agent was created by someone else");
             }
         }
 
         let updated = conn.execute(
-            "UPDATE workers SET status = ?3 WHERE group_name = ?1 AND name = ?2",
-            params![group_name, name, status],
+            "UPDATE agents SET status = ?3 WHERE workspace_name = ?1 AND name = ?2",
+            params![workspace_name, name, status],
         )?;
         if updated == 0 {
-            anyhow::bail!("worker not found");
+            anyhow::bail!("agent not found");
         }
         Ok(())
     }
 
-    /// Get all active workers on a node across ALL groups.
+    /// Get all active agents on a machine across ALL workspaces.
     /// Used by the daemon.
-    pub fn get_all_active_workers_for_node(
+    pub fn get_all_active_agents_for_machine(
         &self,
-        node_id: &str,
-    ) -> Result<Vec<(String, Worker)>> {
+        machine_id: &str,
+    ) -> Result<Vec<(String, Agent)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT group_name, name, description, instructions, node_id, runtime, status, registered_by, created_at FROM workers WHERE node_id = ?1 AND status = 'active'",
+            "SELECT workspace_name, name, description, instructions, machine_id, runtime, status, registered_by, created_at FROM agents WHERE machine_id = ?1 AND status = 'active'",
         )?;
-        let workers = stmt
-            .query_map(params![node_id], |row| {
-                let group: String = row.get(0)?;
+        let agents = stmt
+            .query_map(params![machine_id], |row| {
+                let workspace: String = row.get(0)?;
                 let ts: String = row.get(8)?;
                 Ok((
-                    group,
-                    Worker {
+                    workspace,
+                    Agent {
                         name: row.get(1)?,
                         description: row.get(2)?,
                         instructions: row.get(3)?,
-                        node_id: row.get(4)?,
+                        machine_id: row.get(4)?,
                         runtime: row.get(5)?,
                         status: row.get(6)?,
                         registered_by: row.get(7)?,
@@ -818,31 +741,31 @@ impl Database {
                 ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(workers)
+        Ok(agents)
     }
 
-    pub fn get_worker_logs(
+    pub fn get_agent_logs(
         &self,
-        group_name: &str,
-        worker_name: &str,
+        workspace_name: &str,
+        agent_name: &str,
         limit: i64,
     ) -> Result<Vec<InboxMessage>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, thread_id, from_agent, to_agent, type, content, status, created_at
+            "SELECT id, thread_id, from_id, to_id, type, content, status, created_at
              FROM inbox_messages
-             WHERE group_name = ?1 AND (to_agent = ?2 OR from_agent = ?2)
+             WHERE workspace_name = ?1 AND (to_id = ?2 OR from_id = ?2)
              ORDER BY created_at DESC LIMIT ?3",
         )?;
         let messages = stmt
-            .query_map(params![group_name, worker_name, limit], |row| {
+            .query_map(params![workspace_name, agent_name, limit], |row| {
                 let content_str: Option<String> = row.get(5)?;
                 let ts: String = row.get(7)?;
                 Ok(InboxMessage {
                     id: row.get(0)?,
                     thread_id: row.get(1)?,
-                    from_agent: row.get(2)?,
-                    to_agent: row.get(3)?,
+                    from_id: row.get(2)?,
+                    to_id: row.get(3)?,
                     msg_type: row.get(4)?,
                     content: content_str.and_then(|s| serde_json::from_str(&s).ok()),
                     status: row.get(6)?,
@@ -857,8 +780,8 @@ impl Database {
 
     pub fn create_cron_job(
         &self,
-        group_name: &str,
-        worker: &str,
+        workspace_name: &str,
+        agent: &str,
         schedule: &str,
         task: &str,
         created_by: &str,
@@ -866,13 +789,13 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let id = format!("cron-{}", &Uuid::new_v4().to_string()[..8]);
         conn.execute(
-            "INSERT INTO cron_jobs (id, group_name, worker, schedule, task, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, group_name, worker, schedule, task, created_by],
+            "INSERT INTO cron_jobs (id, workspace_name, agent, schedule, task, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, workspace_name, agent, schedule, task, created_by],
         )?;
         Ok(CronJob {
             id,
-            group_name: group_name.to_string(),
-            worker: worker.to_string(),
+            workspace_name: workspace_name.to_string(),
+            agent: agent.to_string(),
             schedule: schedule.to_string(),
             task: task.to_string(),
             enabled: true,
@@ -882,21 +805,21 @@ impl Database {
         })
     }
 
-    pub fn list_cron_jobs(&self, group_name: &str) -> Result<Vec<CronJob>> {
+    pub fn list_cron_jobs(&self, workspace_name: &str) -> Result<Vec<CronJob>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, group_name, worker, schedule, task, enabled, last_run, created_by, created_at
-             FROM cron_jobs WHERE group_name = ?1 ORDER BY created_at",
+            "SELECT id, workspace_name, agent, schedule, task, enabled, last_run, created_by, created_at
+             FROM cron_jobs WHERE workspace_name = ?1 ORDER BY created_at",
         )?;
         let jobs = stmt
-            .query_map(params![group_name], |row| {
+            .query_map(params![workspace_name], |row| {
                 let last_run_str: Option<String> = row.get(6)?;
                 let ts: String = row.get(8)?;
                 let enabled: i32 = row.get(5)?;
                 Ok(CronJob {
                     id: row.get(0)?,
-                    group_name: row.get(1)?,
-                    worker: row.get(2)?,
+                    workspace_name: row.get(1)?,
+                    agent: row.get(2)?,
                     schedule: row.get(3)?,
                     task: row.get(4)?,
                     enabled: enabled != 0,
@@ -912,7 +835,7 @@ impl Database {
     pub fn get_all_enabled_cron_jobs(&self) -> Result<Vec<CronJob>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, group_name, worker, schedule, task, enabled, last_run, created_by, created_at
+            "SELECT id, workspace_name, agent, schedule, task, enabled, last_run, created_by, created_at
              FROM cron_jobs WHERE enabled = 1",
         )?;
         let jobs = stmt
@@ -921,8 +844,8 @@ impl Database {
                 let ts: String = row.get(8)?;
                 Ok(CronJob {
                     id: row.get(0)?,
-                    group_name: row.get(1)?,
-                    worker: row.get(2)?,
+                    workspace_name: row.get(1)?,
+                    agent: row.get(2)?,
                     schedule: row.get(3)?,
                     task: row.get(4)?,
                     enabled: true,
@@ -935,12 +858,12 @@ impl Database {
         Ok(jobs)
     }
 
-    pub fn remove_cron_job(&self, group_name: &str, cron_id: &str, user_id: &str) -> Result<()> {
+    pub fn remove_cron_job(&self, workspace_name: &str, cron_id: &str, user_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let creator: Option<String> = conn
             .query_row(
-                "SELECT created_by FROM cron_jobs WHERE id = ?1 AND group_name = ?2",
-                params![cron_id, group_name],
+                "SELECT created_by FROM cron_jobs WHERE id = ?1 AND workspace_name = ?2",
+                params![cron_id, workspace_name],
                 |row| row.get(0),
             )
             .optional()?;
@@ -950,17 +873,17 @@ impl Database {
             None => anyhow::bail!("cron job not found"),
         }
         conn.execute(
-            "DELETE FROM cron_jobs WHERE id = ?1 AND group_name = ?2",
-            params![cron_id, group_name],
+            "DELETE FROM cron_jobs WHERE id = ?1 AND workspace_name = ?2",
+            params![cron_id, workspace_name],
         )?;
         Ok(())
     }
 
-    pub fn set_cron_enabled(&self, group_name: &str, cron_id: &str, enabled: bool) -> Result<()> {
+    pub fn set_cron_enabled(&self, workspace_name: &str, cron_id: &str, enabled: bool) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE cron_jobs SET enabled = ?1 WHERE id = ?2 AND group_name = ?3",
-            params![enabled as i32, cron_id, group_name],
+            "UPDATE cron_jobs SET enabled = ?1 WHERE id = ?2 AND workspace_name = ?3",
+            params![enabled as i32, cron_id, workspace_name],
         )?;
         Ok(())
     }
@@ -998,13 +921,13 @@ mod tests {
     }
 
     #[test]
-    fn test_create_user_gets_personal_group() {
+    fn test_create_user_gets_personal_workspace() {
         let db = test_db();
         let (user, _key) = db.create_user("alice", false).unwrap();
 
-        let groups = db.list_groups_for_user(&user.id).unwrap();
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].name, "alice");
+        let workspaces = db.list_workspaces_for_user(&user.id).unwrap();
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].name, "alice");
     }
 
     #[test]
@@ -1021,100 +944,98 @@ mod tests {
     }
 
     #[test]
-    fn test_group_membership() {
+    fn test_workspace_membership() {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
         let (bob, _) = db.create_user("bob", false).unwrap();
 
-        // Alice creates shared group
-        db.create_group("frontend", &alice.id).unwrap();
+        // Alice creates shared workspace
+        db.create_workspace("frontend", &alice.id).unwrap();
 
         // Add Bob
-        db.add_group_member("frontend", &bob.id).unwrap();
+        db.add_workspace_member("frontend", &bob.id).unwrap();
 
         // Both are members
-        assert!(db.is_group_member("frontend", &alice.id).unwrap());
-        assert!(db.is_group_member("frontend", &bob.id).unwrap());
+        assert!(db.is_workspace_member("frontend", &alice.id).unwrap());
+        assert!(db.is_workspace_member("frontend", &bob.id).unwrap());
 
         // Alice has personal + frontend
-        let alice_groups = db.list_groups_for_user(&alice.id).unwrap();
-        assert_eq!(alice_groups.len(), 2);
+        let alice_workspaces = db.list_workspaces_for_user(&alice.id).unwrap();
+        assert_eq!(alice_workspaces.len(), 2);
 
         // Bob has personal + frontend
-        let bob_groups = db.list_groups_for_user(&bob.id).unwrap();
-        assert_eq!(bob_groups.len(), 2);
+        let bob_workspaces = db.list_workspaces_for_user(&bob.id).unwrap();
+        assert_eq!(bob_workspaces.len(), 2);
     }
 
     #[test]
-    fn test_worker_in_group() {
+    fn test_agent_in_workspace() {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
 
-        db.register_worker("alice", "reviewer", "Code reviewer", "Review code.", "local", "auto", &alice.id)
+        db.register_agent("alice", "reviewer", "Code reviewer", "Review code.", "local", "auto", &alice.id)
             .unwrap();
 
-        let workers = db.list_workers("alice").unwrap();
-        assert_eq!(workers.len(), 1);
-        assert_eq!(workers[0].name, "reviewer");
+        let agents = db.list_agents("alice").unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].name, "reviewer");
 
-        // Not visible in other groups
+        // Not visible in other workspaces
         let (bob, _) = db.create_user("bob", false).unwrap();
-        let workers = db.list_workers("bob").unwrap();
-        assert_eq!(workers.len(), 0);
+        let agents = db.list_agents("bob").unwrap();
+        assert_eq!(agents.len(), 0);
 
-        // But visible in shared group
-        db.create_group("team", &alice.id).unwrap();
-        db.add_group_member("team", &bob.id).unwrap();
-        db.register_worker("team", "shared-reviewer", "Shared reviewer", "Review.", "local", "auto", &alice.id)
+        // But visible in shared workspace
+        db.create_workspace("team", &alice.id).unwrap();
+        db.add_workspace_member("team", &bob.id).unwrap();
+        db.register_agent("team", "shared-reviewer", "Shared reviewer", "Review.", "local", "auto", &alice.id)
             .unwrap();
 
-        let team_workers = db.list_workers("team").unwrap();
-        assert_eq!(team_workers.len(), 1);
-        assert_eq!(team_workers[0].name, "shared-reviewer");
+        let team_agents = db.list_agents("team").unwrap();
+        assert_eq!(team_agents.len(), 1);
+        assert_eq!(team_agents[0].name, "shared-reviewer");
     }
 
     #[test]
-    fn test_node_ownership() {
+    fn test_machine_ownership() {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
         let (bob, _) = db.create_user("bob", false).unwrap();
 
-        db.register_node("alice-gpu", &alice.id).unwrap();
+        db.register_machine("alice-gpu", &alice.id).unwrap();
 
-        let owner = db.get_node_owner("alice-gpu").unwrap();
+        let owner = db.get_machine_owner("alice-gpu").unwrap();
         assert_eq!(owner, Some(alice.id.clone()));
 
         // Bob is not the owner
-        let owner = db.get_node_owner("alice-gpu").unwrap();
+        let owner = db.get_machine_owner("alice-gpu").unwrap();
         assert_ne!(owner, Some(bob.id));
     }
 
     #[test]
-    fn test_worker_ownership_permission() {
+    fn test_agent_ownership_permission() {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
         let (bob, _) = db.create_user("bob", false).unwrap();
 
-        db.create_group("team", &alice.id).unwrap();
-        db.add_group_member("team", &bob.id).unwrap();
+        db.create_workspace("team", &alice.id).unwrap();
+        db.add_workspace_member("team", &bob.id).unwrap();
 
-        db.register_worker("team", "reviewer", "Reviewer", "Review.", "local", "auto", &alice.id)
+        db.register_agent("team", "reviewer", "Reviewer", "Review.", "local", "auto", &alice.id)
             .unwrap();
 
-        // Bob cannot remove Alice's worker
-        let result = db.remove_worker("team", "reviewer", &bob.id);
+        // Bob cannot remove Alice's agent
+        let result = db.remove_agent("team", "reviewer", &bob.id);
         assert!(result.is_err());
 
         // Alice can
-        db.remove_worker("team", "reviewer", &alice.id).unwrap();
+        db.remove_agent("team", "reviewer", &alice.id).unwrap();
     }
 
     #[test]
     fn test_inbox_roundtrip() {
         let db = test_db();
-        let (alice, _) = db.create_user("alice", false).unwrap();
-        db.register_agent("alice", "sender").unwrap();
-        db.register_agent("alice", "receiver").unwrap();
+        let (_alice, _) = db.create_user("alice", false).unwrap();
 
         let msg = db
             .send_inbox_message("alice", "t1", "sender", "receiver", "request", Some(&serde_json::json!("hello")))

@@ -98,7 +98,7 @@ pub struct CliConfig {
     #[serde(default)]
     pub api_key: Option<String>,
     #[serde(default)]
-    pub default_group: Option<String>,
+    pub default_workspace: Option<String>,
 }
 
 fn default_server_url() -> String {
@@ -111,7 +111,7 @@ impl Default for CliConfig {
             server_url: default_server_url(),
             lead_id: None,
             api_key: None,
-            default_group: None,
+            default_workspace: None,
         }
     }
 }
@@ -194,26 +194,26 @@ impl CliConfig {
         format!(
 r#"# Box0 (`b0`) Agent Delegation
 
-You have access to a team of specialized AI workers managed by Box0.
+You have access to a team of specialized AI agents managed by Box0.
 The server is at: {server_url}
 
 ## When to use
 
-When the user's request could benefit from specialized workers or parallel execution, delegate.
+When the user's request could benefit from specialized agents or parallel execution, delegate.
 
-Run `b0 worker ls` to see available workers and their descriptions. Match workers to the task based on their descriptions. You do not need the user to name specific workers.
+Run `b0 agent ls` to see available agents and their descriptions. Match agents to the task based on their descriptions. You do not need the user to name specific agents.
 
 ## Commands
 
 ```bash
-b0 worker ls                                          # list available workers
-b0 delegate <worker> "<detailed task prompt>"         # send task (non-blocking)
-b0 delegate --thread <id> <worker> "<follow-up>"      # continue conversation
+b0 agent ls                                           # list available agents
+b0 delegate <agent> "<detailed task prompt>"          # send task (non-blocking)
+b0 delegate --thread <id> <agent> "<follow-up>"       # continue conversation
 b0 wait                                                # collect all pending results
-b0 reply <thread-id> "<answer>"                        # answer a worker's question
+b0 reply <thread-id> "<answer>"                        # answer an agent's question
 b0 status                                              # check pending tasks
-b0 worker temp "<task>"                                # one-off task, no named worker
-b0 cron add <worker> --every <interval> "<task>"       # schedule recurring task (30s/5m/1h/6h/1d)
+b0 agent temp "<task>"                                 # one-off task, no named agent
+b0 cron add <agent> --every <interval> "<task>"        # schedule recurring task (30s/5m/1h/6h/1d)
 b0 cron ls                                             # list scheduled tasks
 b0 cron remove <id>                                    # remove a scheduled task
 ```
@@ -238,7 +238,7 @@ Cite line numbers for any issues found."
 Steps:
 1. **Gather context first** — read relevant files, run `git diff`, check the branch
 2. **Include specifics** — file paths, line numbers, branch names, what changed and why
-3. **State the deliverable** — what the worker should produce (a list of issues, a summary, a fix)
+3. **State the deliverable** — what the agent should produce (a list of issues, a summary, a fix)
 
 For large content (diffs, file contents), pipe via stdin:
 ```
@@ -247,7 +247,7 @@ git diff main..HEAD | b0 delegate reviewer "Review the following diff. Focus on 
 
 ## Concurrent tasks
 
-Delegate to multiple workers, then collect all results:
+Delegate to multiple agents, then collect all results:
 
 ```bash
 b0 delegate reviewer "Review the changes on branch feature-timeout..."
@@ -258,13 +258,13 @@ b0 wait
 
 All three run in parallel. `b0 wait` blocks until all complete.
 
-## Handling worker questions
+## Handling agent questions
 
-During `b0 wait`, a worker may ask a question:
+During `b0 wait`, an agent may ask a question:
 
 ```
 reviewer asks (thread thread-abc): "Is the timeout change on line 42 intentional?"
-  → Use: b0 reply thread-abc "<your answer>"
+  -> Use: b0 reply thread-abc "<your answer>"
 ```
 
 Answer with `b0 reply`, then run `b0 wait` again to continue collecting results.
@@ -275,22 +275,22 @@ Before responding to a new user message, run `b0 status` to check if any previou
 
 ## Error handling
 
-If a worker fails, `b0 wait` reports it. Decide whether to:
+If an agent fails, `b0 wait` reports it. Decide whether to:
 - Retry with a clearer prompt
-- Try a different worker
+- Try a different agent
 - Handle the task yourself
 - Report the failure to the user
 
 ## Multi-turn conversations
 
-To continue a conversation with a worker, pass the thread ID from the first round:
+To continue a conversation with an agent, pass the thread ID from the first round:
 
 ```bash
-b0 delegate --thread <thread-id> <worker> "<follow-up>"
+b0 delegate --thread <thread-id> <agent> "<follow-up>"
 b0 wait
 ```
 
-The worker remembers all previous turns.
+The agent remembers all previous turns.
 "#,
             server_url = server_url
         )
@@ -309,11 +309,11 @@ The worker remembers all previous turns.
 r#"---
 name: b0
 description: |
-  Delegate tasks to AI workers via Box0. Use when the user asks to
+  Delegate tasks to AI agents via Box0. Use when the user asks to
   review code, check security, run tests, compare tools, get multiple
   perspectives, research a topic, analyze data, write docs, or any
   task that could benefit from specialized or parallel execution.
-  Also use when the user mentions worker names or says "ask", "delegate",
+  Also use when the user mentions agent names or says "ask", "delegate",
   "get opinions from", or "have someone".
 allowed-tools:
   - Bash
@@ -431,8 +431,8 @@ pub struct PendingState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingThread {
-    pub worker: String,
-    pub group: String,
+    pub agent: String,
+    pub workspace: String,
     pub task: String,
     pub created_at: String,
     #[serde(default)]

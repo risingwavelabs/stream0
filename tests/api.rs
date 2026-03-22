@@ -14,8 +14,8 @@ async fn start_test_server() -> (String, String, TempDir) {
     // Bootstrap admin
     let (admin_user, admin_key) = db.bootstrap_admin().unwrap().unwrap();
 
-    // Register local node
-    db.register_node("local", &admin_user.id).unwrap();
+    // Register local machine
+    db.register_machine("local", &admin_user.id).unwrap();
 
     let state: SharedState = Arc::new(AppState { db });
     let app = box0::server::build_router(state);
@@ -49,7 +49,7 @@ async fn test_health() {
 async fn test_auth_rejects_bad_key() {
     let (url, _key, _tmp) = start_test_server().await;
     let client = BhClient::with_api_key(&url, "b0_invalid");
-    let result = client.list_groups().await;
+    let result = client.list_workspaces().await;
     assert!(result.is_err());
 }
 
@@ -57,21 +57,21 @@ async fn test_auth_rejects_bad_key() {
 async fn test_auth_rejects_no_key() {
     let (url, _key, _tmp) = start_test_server().await;
     let client = BhClient::new(&url);
-    let result = client.list_groups().await;
+    let result = client.list_workspaces().await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
-async fn test_admin_has_personal_group() {
+async fn test_admin_has_personal_workspace() {
     let (url, key, _tmp) = start_test_server().await;
     let client = admin_client(&url, &key);
-    let groups = client.list_groups().await.unwrap();
-    assert_eq!(groups.len(), 1);
-    assert_eq!(groups[0].name, "admin");
+    let workspaces = client.list_workspaces().await.unwrap();
+    assert_eq!(workspaces.len(), 1);
+    assert_eq!(workspaces[0].name, "admin");
 }
 
 #[tokio::test]
-async fn test_invite_user_and_group_membership() {
+async fn test_invite_user_and_workspace_membership() {
     let (url, key, _tmp) = start_test_server().await;
     let client = admin_client(&url, &key);
 
@@ -80,64 +80,64 @@ async fn test_invite_user_and_group_membership() {
     assert_eq!(alice.name, "alice");
     assert!(alice.key.starts_with("b0_"));
 
-    // Alice has her own personal group
+    // Alice has her own personal workspace
     let alice_client = BhClient::with_api_key(&url, &alice.key);
-    let alice_groups = alice_client.list_groups().await.unwrap();
-    assert_eq!(alice_groups.len(), 1);
-    assert_eq!(alice_groups[0].name, "alice");
+    let alice_workspaces = alice_client.list_workspaces().await.unwrap();
+    assert_eq!(alice_workspaces.len(), 1);
+    assert_eq!(alice_workspaces[0].name, "alice");
 
-    // Admin creates shared group and adds alice
-    client.create_group("dev-team").await.unwrap();
-    client.add_group_member("dev-team", &alice.user_id).await.unwrap();
+    // Admin creates shared workspace and adds alice
+    client.create_workspace("dev-team").await.unwrap();
+    client.add_workspace_member("dev-team", &alice.user_id).await.unwrap();
 
-    // Alice now sees 2 groups
-    let alice_groups = alice_client.list_groups().await.unwrap();
-    assert_eq!(alice_groups.len(), 2);
+    // Alice now sees 2 workspaces
+    let alice_workspaces = alice_client.list_workspaces().await.unwrap();
+    assert_eq!(alice_workspaces.len(), 2);
 }
 
 #[tokio::test]
-async fn test_worker_crud() {
+async fn test_agent_crud() {
     let (url, key, _tmp) = start_test_server().await;
     let client = admin_client(&url, &key);
 
     // Create
-    let w = client
-        .register_worker("admin", "reviewer", "Code reviewer", "Review code.", "local", "auto")
+    let a = client
+        .register_agent("admin", "reviewer", "Code reviewer", "Review code.", "local", "auto")
         .await
         .unwrap();
-    assert_eq!(w.name, "reviewer");
-    assert_eq!(w.runtime, "auto");
+    assert_eq!(a.name, "reviewer");
+    assert_eq!(a.runtime, "auto");
 
     // List
-    let workers = client.list_workers("admin").await.unwrap();
-    assert_eq!(workers.len(), 1);
+    let agents = client.list_agents("admin").await.unwrap();
+    assert_eq!(agents.len(), 1);
 
     // Get
-    let w = client.get_worker("admin", "reviewer").await.unwrap();
-    assert_eq!(w.instructions, "Review code.");
+    let a = client.get_agent("admin", "reviewer").await.unwrap();
+    assert_eq!(a.instructions, "Review code.");
 
     // Update
-    client.update_worker("admin", "reviewer", "Review carefully.").await.unwrap();
-    let w = client.get_worker("admin", "reviewer").await.unwrap();
-    assert_eq!(w.instructions, "Review carefully.");
+    client.update_agent("admin", "reviewer", "Review carefully.").await.unwrap();
+    let a = client.get_agent("admin", "reviewer").await.unwrap();
+    assert_eq!(a.instructions, "Review carefully.");
 
     // Stop / start
-    client.stop_worker("admin", "reviewer").await.unwrap();
-    let w = client.get_worker("admin", "reviewer").await.unwrap();
-    assert_eq!(w.status, "stopped");
+    client.stop_agent("admin", "reviewer").await.unwrap();
+    let a = client.get_agent("admin", "reviewer").await.unwrap();
+    assert_eq!(a.status, "stopped");
 
-    client.start_worker("admin", "reviewer").await.unwrap();
-    let w = client.get_worker("admin", "reviewer").await.unwrap();
-    assert_eq!(w.status, "active");
+    client.start_agent("admin", "reviewer").await.unwrap();
+    let a = client.get_agent("admin", "reviewer").await.unwrap();
+    assert_eq!(a.status, "active");
 
     // Remove
-    client.remove_worker("admin", "reviewer").await.unwrap();
-    let workers = client.list_workers("admin").await.unwrap();
-    assert_eq!(workers.len(), 0);
+    client.remove_agent("admin", "reviewer").await.unwrap();
+    let agents = client.list_agents("admin").await.unwrap();
+    assert_eq!(agents.len(), 0);
 }
 
 #[tokio::test]
-async fn test_worker_group_isolation() {
+async fn test_agent_workspace_isolation() {
     let (url, key, _tmp) = start_test_server().await;
     let client = admin_client(&url, &key);
 
@@ -147,51 +147,51 @@ async fn test_worker_group_isolation() {
     let alice_client = BhClient::with_api_key(&url, &alice.key);
     let bob_client = BhClient::with_api_key(&url, &bob.key);
 
-    // Alice creates a worker in her personal group
+    // Alice creates an agent in her personal workspace
     alice_client
-        .register_worker("alice", "alice-worker", "", "Do stuff.", "local", "auto")
+        .register_agent("alice", "alice-agent", "", "Do stuff.", "local", "auto")
         .await
         .unwrap();
 
-    // Bob cannot see alice's workers (not a member of alice's group)
-    let result = bob_client.list_workers("alice").await;
+    // Bob cannot see alice's agents (not a member of alice's workspace)
+    let result = bob_client.list_agents("alice").await;
     assert!(result.is_err());
 
-    // Bob creates his own worker
+    // Bob creates his own agent
     bob_client
-        .register_worker("bob", "bob-worker", "", "Do stuff.", "local", "auto")
+        .register_agent("bob", "bob-agent", "", "Do stuff.", "local", "auto")
         .await
         .unwrap();
 
-    // Alice cannot see bob's workers
-    let result = alice_client.list_workers("bob").await;
+    // Alice cannot see bob's agents
+    let result = alice_client.list_agents("bob").await;
     assert!(result.is_err());
 }
 
 #[tokio::test]
-async fn test_worker_ownership_permission() {
+async fn test_agent_ownership_permission() {
     let (url, key, _tmp) = start_test_server().await;
     let client = admin_client(&url, &key);
 
-    // Create shared group, invite alice
+    // Create shared workspace, invite alice
     let alice = client.invite_user("alice").await.unwrap();
-    client.create_group("team").await.unwrap();
-    client.add_group_member("team", &alice.user_id).await.unwrap();
+    client.create_workspace("team").await.unwrap();
+    client.add_workspace_member("team", &alice.user_id).await.unwrap();
 
     let alice_client = BhClient::with_api_key(&url, &alice.key);
 
-    // Alice creates a worker in the shared group
+    // Alice creates an agent in the shared workspace
     alice_client
-        .register_worker("team", "alice-worker", "", "Do stuff.", "local", "auto")
+        .register_agent("team", "alice-agent", "", "Do stuff.", "local", "auto")
         .await
         .unwrap();
 
-    // Admin cannot remove alice's worker
-    let result = client.remove_worker("team", "alice-worker").await;
+    // Admin cannot remove alice's agent
+    let result = client.remove_agent("team", "alice-agent").await;
     assert!(result.is_err());
 
-    // Alice can remove her own worker
-    alice_client.remove_worker("team", "alice-worker").await.unwrap();
+    // Alice can remove her own agent
+    alice_client.remove_agent("team", "alice-agent").await.unwrap();
 }
 
 #[tokio::test]
@@ -200,8 +200,8 @@ async fn test_inbox_roundtrip() {
     let client = admin_client(&url, &key);
 
     // Register agents
-    client.register_agent("admin", "sender").await.unwrap();
-    client.register_agent("admin", "receiver").await.unwrap();
+    client.register_agent("admin", "sender", "", "Send stuff.", "local", "auto").await.unwrap();
+    client.register_agent("admin", "receiver", "", "Receive stuff.", "local", "auto").await.unwrap();
 
     // Send message
     let content = serde_json::json!("hello");
@@ -229,9 +229,9 @@ async fn test_started_message_flow() {
     let (url, key, _tmp) = start_test_server().await;
     let client = admin_client(&url, &key);
 
-    // Register lead agent and worker agent
-    client.register_agent("admin", "lead").await.unwrap();
-    client.register_agent("admin", "worker-1").await.unwrap();
+    // Register lead and worker agent
+    client.register_agent("admin", "lead", "", "Lead agent.", "local", "auto").await.unwrap();
+    client.register_agent("admin", "worker-1", "", "Worker agent.", "local", "auto").await.unwrap();
 
     // Simulate: lead sends request to worker
     client
@@ -249,7 +249,7 @@ async fn test_started_message_flow() {
     let messages = client.get_inbox("admin", "lead", Some("unread"), None).await.unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].msg_type, "started");
-    assert_eq!(messages[0].from_agent, "worker-1");
+    assert_eq!(messages[0].from_id, "worker-1");
 
     // Ack it
     client.ack_message("admin", &messages[0].id).await.unwrap();
@@ -266,22 +266,22 @@ async fn test_started_message_flow() {
 }
 
 #[tokio::test]
-async fn test_nodes() {
+async fn test_machines() {
     let (url, key, _tmp) = start_test_server().await;
     let client = admin_client(&url, &key);
 
-    // Local node exists from bootstrap
-    let nodes = client.list_nodes().await.unwrap();
-    assert_eq!(nodes.len(), 1);
-    assert_eq!(nodes[0].id, "local");
+    // Local machine exists from bootstrap
+    let machines = client.list_machines().await.unwrap();
+    assert_eq!(machines.len(), 1);
+    assert_eq!(machines[0].id, "local");
 
-    // Register another node
-    client.register_node("gpu-box").await.unwrap();
-    let nodes = client.list_nodes().await.unwrap();
-    assert_eq!(nodes.len(), 2);
+    // Register another machine
+    client.register_machine("gpu-box").await.unwrap();
+    let machines = client.list_machines().await.unwrap();
+    assert_eq!(machines.len(), 2);
 
     // Heartbeat
-    client.heartbeat_node("gpu-box").await.unwrap();
+    client.heartbeat_machine("gpu-box").await.unwrap();
 }
 
 #[tokio::test]
@@ -289,16 +289,16 @@ async fn test_cron_crud() {
     let (url, key, _tmp) = start_test_server().await;
     let client = admin_client(&url, &key);
 
-    // Create a worker first
+    // Create an agent first
     client
-        .register_worker("admin", "seo-worker", "SEO checker", "Check SEO.", "local", "auto")
+        .register_agent("admin", "seo-agent", "SEO checker", "Check SEO.", "local", "auto")
         .await
         .unwrap();
 
     // Create cron job
-    let job = client.create_cron_job("admin", "seo-worker", "6h", "Check the website SEO").await.unwrap();
+    let job = client.create_cron_job("admin", "seo-agent", "6h", "Check the website SEO").await.unwrap();
     assert!(job.id.starts_with("cron-"));
-    assert_eq!(job.worker, "seo-worker");
+    assert_eq!(job.agent, "seo-agent");
     assert_eq!(job.schedule, "6h");
     assert!(job.enabled);
 
@@ -329,11 +329,11 @@ async fn test_cron_invalid_schedule() {
     let client = admin_client(&url, &key);
 
     client
-        .register_worker("admin", "worker", "", "Do stuff.", "local", "auto")
+        .register_agent("admin", "agent", "", "Do stuff.", "local", "auto")
         .await
         .unwrap();
 
     // Invalid schedule should fail
-    let result = client.create_cron_job("admin", "worker", "invalid", "task").await;
+    let result = client.create_cron_job("admin", "agent", "invalid", "task").await;
     assert!(result.is_err());
 }

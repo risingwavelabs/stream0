@@ -16,8 +16,8 @@ struct ErrorResponse {
 }
 
 #[derive(Debug, Deserialize)]
-struct WorkersResponse {
-    workers: Vec<crate::db::Worker>,
+struct AgentsResponse {
+    agents: Vec<crate::db::Agent>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,88 +84,78 @@ impl BhClient {
         Ok(body["version"].as_str().unwrap_or("unknown").to_string())
     }
 
-    // --- Agents (group-scoped) ---
+    // --- Agents (workspace-scoped) ---
 
-    pub async fn register_agent(&self, group: &str, id: &str) -> Result<crate::db::Agent> {
+    pub async fn register_agent(&self, workspace: &str, name: &str, description: &str, instructions: &str, machine_id: &str, runtime: &str) -> Result<crate::db::Agent> {
         let req = self.client
-            .post(format!("{}/groups/{}/agents", self.base_url, group))
-            .json(&serde_json::json!({"id": id}));
+            .post(format!("{}/workspaces/{}/agents", self.base_url, workspace))
+            .json(&serde_json::json!({"name": name, "description": description, "instructions": instructions, "machine_id": machine_id, "runtime": runtime}));
         let resp = self.request(req).await?;
         Ok(resp.json().await?)
     }
 
-    // --- Workers (group-scoped) ---
+    pub async fn list_agents(&self, workspace: &str) -> Result<Vec<crate::db::Agent>> {
+        let req = self.client.get(format!("{}/workspaces/{}/agents", self.base_url, workspace));
+        let resp = self.request(req).await?;
+        let body: AgentsResponse = resp.json().await?;
+        Ok(body.agents)
+    }
 
-    pub async fn register_worker(&self, group: &str, name: &str, description: &str, instructions: &str, node_id: &str, runtime: &str) -> Result<crate::db::Worker> {
-        let req = self.client
-            .post(format!("{}/groups/{}/workers", self.base_url, group))
-            .json(&serde_json::json!({"name": name, "description": description, "instructions": instructions, "node_id": node_id, "runtime": runtime}));
+    pub async fn get_agent(&self, workspace: &str, name: &str) -> Result<crate::db::Agent> {
+        let req = self.client.get(format!("{}/workspaces/{}/agents/{}", self.base_url, workspace, name));
         let resp = self.request(req).await?;
         Ok(resp.json().await?)
     }
 
-    pub async fn list_workers(&self, group: &str) -> Result<Vec<crate::db::Worker>> {
-        let req = self.client.get(format!("{}/groups/{}/workers", self.base_url, group));
-        let resp = self.request(req).await?;
-        let body: WorkersResponse = resp.json().await?;
-        Ok(body.workers)
-    }
-
-    pub async fn get_worker(&self, group: &str, name: &str) -> Result<crate::db::Worker> {
-        let req = self.client.get(format!("{}/groups/{}/workers/{}", self.base_url, group, name));
-        let resp = self.request(req).await?;
-        Ok(resp.json().await?)
-    }
-
-    pub async fn remove_worker(&self, group: &str, name: &str) -> Result<()> {
-        let req = self.client.delete(format!("{}/groups/{}/workers/{}", self.base_url, group, name));
+    pub async fn remove_agent(&self, workspace: &str, name: &str) -> Result<()> {
+        let req = self.client.delete(format!("{}/workspaces/{}/agents/{}", self.base_url, workspace, name));
         self.request(req).await?;
         Ok(())
     }
 
-    pub async fn update_worker(&self, group: &str, name: &str, instructions: &str) -> Result<()> {
+    pub async fn update_agent(&self, workspace: &str, name: &str, instructions: &str) -> Result<()> {
         let req = self.client
-            .put(format!("{}/groups/{}/workers/{}", self.base_url, group, name))
+            .put(format!("{}/workspaces/{}/agents/{}", self.base_url, workspace, name))
             .json(&serde_json::json!({"instructions": instructions}));
         self.request(req).await?;
         Ok(())
     }
 
-    pub async fn stop_worker(&self, group: &str, name: &str) -> Result<()> {
-        let req = self.client.post(format!("{}/groups/{}/workers/{}/stop", self.base_url, group, name));
+    pub async fn stop_agent(&self, workspace: &str, name: &str) -> Result<()> {
+        let req = self.client.post(format!("{}/workspaces/{}/agents/{}/stop", self.base_url, workspace, name));
         self.request(req).await?;
         Ok(())
     }
 
-    pub async fn start_worker(&self, group: &str, name: &str) -> Result<()> {
-        let req = self.client.post(format!("{}/groups/{}/workers/{}/start", self.base_url, group, name));
+    pub async fn start_agent(&self, workspace: &str, name: &str) -> Result<()> {
+        let req = self.client.post(format!("{}/workspaces/{}/agents/{}/start", self.base_url, workspace, name));
         self.request(req).await?;
         Ok(())
     }
 
-    pub async fn worker_logs(&self, group: &str, name: &str) -> Result<Vec<crate::db::InboxMessage>> {
-        let req = self.client.get(format!("{}/groups/{}/workers/{}/logs", self.base_url, group, name));
+    pub async fn agent_logs(&self, workspace: &str, name: &str) -> Result<Vec<crate::db::InboxMessage>> {
+        let req = self.client.get(format!("{}/workspaces/{}/agents/{}/logs", self.base_url, workspace, name));
         let resp = self.request(req).await?;
         let body: InboxResponse = resp.json().await?;
         Ok(body.messages)
     }
 
-    // --- Inbox (group-scoped) ---
+    // --- Inbox (workspace-scoped) ---
 
-    pub async fn send_message(&self, group: &str, to: &str, thread_id: &str, from: &str, msg_type: &str, content: Option<&serde_json::Value>) -> Result<()> {
+    pub async fn send_message(&self, workspace: &str, to: &str, thread_id: &str, from: &str, msg_type: &str, content: Option<&serde_json::Value>) -> Result<()> {
         let mut body = serde_json::json!({"thread_id": thread_id, "from": from, "type": msg_type});
         if let Some(c) = content {
             body["content"] = c.clone();
         }
         let req = self.client
-            .post(format!("{}/groups/{}/agents/{}/inbox", self.base_url, group, to))
+            .post(format!("{}/workspaces/{}/agents/{}/inbox", self.base_url, workspace, to))
             .json(&body);
         self.request(req).await?;
         Ok(())
     }
 
-    pub async fn get_inbox(&self, group: &str, agent_id: &str, status: Option<&str>, timeout: Option<f64>) -> Result<Vec<crate::db::InboxMessage>> {
-        let mut url = format!("{}/groups/{}/agents/{}/inbox", self.base_url, group, agent_id);
+    pub async fn get_inbox(&self, workspace: &str, agent_name: &str, status: Option<&str>, timeout: Option<f64>) -> Result<Vec<crate::db::InboxMessage>> {
+        let mut url = format!("{}/workspaces/{}/agents/{}/inbox", self.base_url, workspace, agent_name);
         let mut params = vec![];
         if let Some(s) = status { params.push(format!("status={}", s)); }
         if let Some(t) = timeout { params.push(format!("timeout={}", t)); }
@@ -177,70 +167,70 @@ impl BhClient {
         Ok(body.messages)
     }
 
-    pub async fn ack_message(&self, group: &str, message_id: &str) -> Result<()> {
-        let req = self.client.post(format!("{}/groups/{}/inbox/{}/ack", self.base_url, group, message_id));
+    pub async fn ack_message(&self, workspace: &str, message_id: &str) -> Result<()> {
+        let req = self.client.post(format!("{}/workspaces/{}/inbox/{}/ack", self.base_url, workspace, message_id));
         self.request(req).await?;
         Ok(())
     }
 
-    // --- Nodes (global) ---
+    // --- Machines (global) ---
 
-    pub async fn register_node(&self, id: &str) -> Result<crate::db::Node> {
+    pub async fn register_machine(&self, id: &str) -> Result<crate::db::Machine> {
         let req = self.client
-            .post(format!("{}/nodes", self.base_url))
+            .post(format!("{}/machines", self.base_url))
             .json(&serde_json::json!({"id": id}));
         let resp = self.request(req).await?;
         Ok(resp.json().await?)
     }
 
-    pub async fn list_nodes(&self) -> Result<Vec<crate::db::Node>> {
-        let req = self.client.get(format!("{}/nodes", self.base_url));
+    pub async fn list_machines(&self) -> Result<Vec<crate::db::Machine>> {
+        let req = self.client.get(format!("{}/machines", self.base_url));
         let resp = self.request(req).await?;
         let body: serde_json::Value = resp.json().await?;
-        Ok(serde_json::from_value(body["nodes"].clone()).unwrap_or_default())
+        Ok(serde_json::from_value(body["machines"].clone()).unwrap_or_default())
     }
 
-    /// Get all active workers on a node across all groups (for daemon use).
-    pub async fn node_workers(&self, node_id: &str) -> Result<Vec<(String, crate::db::Worker)>> {
-        let req = self.client.get(format!("{}/nodes/{}/workers", self.base_url, node_id));
+    /// Get all active agents on a machine across all workspaces (for daemon use).
+    pub async fn machine_agents(&self, machine_id: &str) -> Result<Vec<(String, crate::db::Agent)>> {
+        let req = self.client.get(format!("{}/machines/{}/agents", self.base_url, machine_id));
         let resp = self.request(req).await?;
         let body: serde_json::Value = resp.json().await?;
-        let items = body["workers"].as_array().cloned().unwrap_or_default();
+        let items = body["agents"].as_array().cloned().unwrap_or_default();
         let mut result = vec![];
         for item in items {
-            let group = item["group"].as_str().unwrap_or("").to_string();
-            if let Ok(w) = serde_json::from_value::<crate::db::Worker>(item.clone()) {
-                result.push((group, w));
+            let workspace = item["workspace"].as_str().unwrap_or("").to_string();
+            if let Ok(a) = serde_json::from_value::<crate::db::Agent>(item.clone()) {
+                result.push((workspace, a));
             }
         }
         Ok(result)
     }
 
-    pub async fn heartbeat_node(&self, id: &str) -> Result<()> {
-        let req = self.client.post(format!("{}/nodes/{}/heartbeat", self.base_url, id));
+    pub async fn heartbeat_machine(&self, id: &str) -> Result<()> {
+        let req = self.client.post(format!("{}/machines/{}/heartbeat", self.base_url, id));
         self.request(req).await?;
         Ok(())
     }
 
-    // --- Groups ---
+    // --- Workspaces ---
 
-    pub async fn create_group(&self, name: &str) -> Result<crate::db::Group> {
+    pub async fn create_workspace(&self, name: &str) -> Result<crate::db::Workspace> {
         let req = self.client
-            .post(format!("{}/groups", self.base_url))
+            .post(format!("{}/workspaces", self.base_url))
             .json(&serde_json::json!({"name": name}));
         let resp = self.request(req).await?;
         Ok(resp.json().await?)
     }
 
-    pub async fn list_groups(&self) -> Result<Vec<crate::db::Group>> {
-        let req = self.client.get(format!("{}/groups", self.base_url));
+    pub async fn list_workspaces(&self) -> Result<Vec<crate::db::Workspace>> {
+        let req = self.client.get(format!("{}/workspaces", self.base_url));
         let resp = self.request(req).await?;
         let body: serde_json::Value = resp.json().await?;
-        Ok(serde_json::from_value(body["groups"].clone()).unwrap_or_default())
+        Ok(serde_json::from_value(body["workspaces"].clone()).unwrap_or_default())
     }
 
-    pub async fn add_group_member(&self, group: &str, user_id: &str) -> Result<()> {
-        let req = self.client.post(format!("{}/groups/{}/members/{}", self.base_url, group, user_id));
+    pub async fn add_workspace_member(&self, workspace: &str, user_id: &str) -> Result<()> {
+        let req = self.client.post(format!("{}/workspaces/{}/members/{}", self.base_url, workspace, user_id));
         self.request(req).await?;
         Ok(())
     }
@@ -257,30 +247,30 @@ impl BhClient {
 
     // --- Cron Jobs ---
 
-    pub async fn create_cron_job(&self, group: &str, worker: &str, schedule: &str, task: &str) -> Result<crate::db::CronJob> {
+    pub async fn create_cron_job(&self, workspace: &str, agent: &str, schedule: &str, task: &str) -> Result<crate::db::CronJob> {
         let req = self.client
-            .post(format!("{}/groups/{}/cron", self.base_url, group))
-            .json(&serde_json::json!({"worker": worker, "schedule": schedule, "task": task}));
+            .post(format!("{}/workspaces/{}/cron", self.base_url, workspace))
+            .json(&serde_json::json!({"agent": agent, "schedule": schedule, "task": task}));
         let resp = self.request(req).await?;
         Ok(resp.json().await?)
     }
 
-    pub async fn list_cron_jobs(&self, group: &str) -> Result<Vec<crate::db::CronJob>> {
-        let req = self.client.get(format!("{}/groups/{}/cron", self.base_url, group));
+    pub async fn list_cron_jobs(&self, workspace: &str) -> Result<Vec<crate::db::CronJob>> {
+        let req = self.client.get(format!("{}/workspaces/{}/cron", self.base_url, workspace));
         let resp = self.request(req).await?;
         let body: serde_json::Value = resp.json().await?;
         Ok(serde_json::from_value(body["cron_jobs"].clone()).unwrap_or_default())
     }
 
-    pub async fn remove_cron_job(&self, group: &str, cron_id: &str) -> Result<()> {
-        let req = self.client.delete(format!("{}/groups/{}/cron/{}", self.base_url, group, cron_id));
+    pub async fn remove_cron_job(&self, workspace: &str, cron_id: &str) -> Result<()> {
+        let req = self.client.delete(format!("{}/workspaces/{}/cron/{}", self.base_url, workspace, cron_id));
         self.request(req).await?;
         Ok(())
     }
 
-    pub async fn set_cron_enabled(&self, group: &str, cron_id: &str, enabled: bool) -> Result<()> {
+    pub async fn set_cron_enabled(&self, workspace: &str, cron_id: &str, enabled: bool) -> Result<()> {
         let req = self.client
-            .put(format!("{}/groups/{}/cron/{}", self.base_url, group, cron_id))
+            .put(format!("{}/workspaces/{}/cron/{}", self.base_url, workspace, cron_id))
             .json(&serde_json::json!({"enabled": enabled}));
         self.request(req).await?;
         Ok(())

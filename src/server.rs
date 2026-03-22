@@ -34,11 +34,6 @@ pub type SharedState = Arc<AppState>;
 // --- Request types ---
 
 #[derive(Deserialize)]
-struct RegisterAgentRequest {
-    id: String,
-}
-
-#[derive(Deserialize)]
 struct SendInboxRequest {
     thread_id: String,
     from: String,
@@ -59,18 +54,18 @@ struct InboxQuery {
 }
 
 #[derive(Deserialize)]
-struct RegisterWorkerRequest {
+struct RegisterAgentRequest {
     name: String,
     #[serde(default)]
     description: String,
     instructions: String,
-    #[serde(default = "default_node_id")]
-    node_id: String,
+    #[serde(default = "default_machine_id")]
+    machine_id: String,
     #[serde(default = "default_runtime")]
     runtime: String,
 }
 
-fn default_node_id() -> String {
+fn default_machine_id() -> String {
     "local".to_string()
 }
 
@@ -79,17 +74,17 @@ fn default_runtime() -> String {
 }
 
 #[derive(Deserialize)]
-struct UpdateWorkerRequest {
+struct UpdateAgentRequest {
     instructions: String,
 }
 
 #[derive(Deserialize)]
-struct RegisterNodeRequest {
+struct RegisterMachineRequest {
     id: String,
 }
 
 #[derive(Deserialize)]
-struct CreateGroupRequest {
+struct CreateWorkspaceRequest {
     name: String,
 }
 
@@ -132,20 +127,20 @@ async fn auth_middleware(
     }
 }
 
-/// Check caller is a member of the group. Returns error response if not.
-fn require_group_member(
+/// Check caller is a member of the workspace. Returns error response if not.
+fn require_workspace_member(
     state: &AppState,
     caller: &Caller,
-    group_name: &str,
+    workspace_name: &str,
 ) -> Result<(), axum::response::Response> {
     if caller.user.is_admin {
         return Ok(());
     }
-    match state.db.is_group_member(group_name, &caller.user.id) {
+    match state.db.is_workspace_member(workspace_name, &caller.user.id) {
         Ok(true) => Ok(()),
         _ => Err(error_response(
             StatusCode::FORBIDDEN,
-            "not a member of this group",
+            "not a member of this workspace",
         )),
     }
 }
@@ -159,40 +154,24 @@ async fn health_handler() -> Json<serde_json::Value> {
     }))
 }
 
-// --- Handlers: Agents ---
-
-async fn register_agent_handler(
-    State(state): State<SharedState>,
-    Extension(caller): Extension<Caller>,
-    Path(group_name): Path<String>,
-    Json(req): Json<RegisterAgentRequest>,
-) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
-        return e;
-    }
-    match state.db.register_agent(&group_name, &req.id) {
-        Ok(agent) => (StatusCode::CREATED, Json(serde_json::to_value(agent).unwrap())).into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    }
-}
-
 // --- Handlers: Inbox ---
 
 async fn send_inbox_message_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path((group_name, agent_id)): Path<(String, String)>,
+    Path((workspace_name, agent_name)): Path<(String, String)>,
     Json(req): Json<SendInboxRequest>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
 
-    let resolved_id = match state.db.resolve_agent(&group_name, &agent_id) {
-        Ok(Some(id)) => id,
+    // Verify agent exists
+    match state.db.get_agent(&workspace_name, &agent_name) {
+        Ok(Some(_)) => {}
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "agent not found"),
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
+    }
 
     let valid_types = ["request", "question", "answer", "done", "failed", "message", "started"];
     if !valid_types.contains(&req.msg_type.as_str()) {
@@ -200,7 +179,7 @@ async fn send_inbox_message_handler(
     }
 
     match state.db.send_inbox_message(
-        &group_name, &req.thread_id, &req.from, &resolved_id, &req.msg_type, req.content.as_ref(),
+        &workspace_name, &req.thread_id, &req.from, &agent_name, &req.msg_type, req.content.as_ref(),
     ) {
         Ok(msg) => (
             StatusCode::CREATED,
@@ -213,27 +192,26 @@ async fn send_inbox_message_handler(
 async fn get_inbox_messages_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path((group_name, agent_id)): Path<(String, String)>,
+    Path((workspace_name, agent_name)): Path<(String, String)>,
     Query(params): Query<InboxQuery>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
 
-    let resolved_id = match state.db.resolve_agent(&group_name, &agent_id) {
-        Ok(Some(id)) => id,
+    // Verify agent exists
+    match state.db.get_agent(&workspace_name, &agent_name) {
+        Ok(Some(_)) => {}
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "agent not found"),
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    };
-
-    let _ = state.db.update_last_seen(&group_name, &resolved_id);
+    }
 
     let timeout = params.timeout.unwrap_or(0.0).clamp(0.0, 30.0);
     let start = std::time::Instant::now();
 
     loop {
         match state.db.get_inbox_messages(
-            &group_name, &resolved_id, params.status.as_deref(), params.thread_id.as_deref(),
+            &workspace_name, &agent_name, params.status.as_deref(), params.thread_id.as_deref(),
         ) {
             Ok(messages) if !messages.is_empty() || timeout <= 0.0 => {
                 return (StatusCode::OK, Json(serde_json::json!({"messages": messages}))).into_response();
@@ -253,12 +231,12 @@ async fn get_inbox_messages_handler(
 async fn ack_inbox_message_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path((group_name, message_id)): Path<(String, String)>,
+    Path((workspace_name, message_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
-    match state.db.ack_inbox_message(&group_name, &message_id) {
+    match state.db.ack_inbox_message(&workspace_name, &message_id) {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "acked"}))).into_response(),
         Err(e) => error_response(StatusCode::NOT_FOUND, &e.to_string()),
     }
@@ -267,38 +245,38 @@ async fn ack_inbox_message_handler(
 async fn get_thread_messages_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path((group_name, thread_id)): Path<(String, String)>,
+    Path((workspace_name, thread_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
-    match state.db.get_thread_messages(&group_name, &thread_id) {
+    match state.db.get_thread_messages(&workspace_name, &thread_id) {
         Ok(messages) => (StatusCode::OK, Json(serde_json::json!({"messages": messages}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-// --- Handlers: Workers ---
+// --- Handlers: Agents ---
 
-async fn register_worker_handler(
+async fn register_agent_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path(group_name): Path<String>,
-    Json(req): Json<RegisterWorkerRequest>,
+    Path(workspace_name): Path<String>,
+    Json(req): Json<RegisterAgentRequest>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
 
-    // Check node ownership if not "local"
-    if req.node_id != "local" {
-        match state.db.get_node_owner(&req.node_id) {
+    // Check machine ownership if not "local"
+    if req.machine_id != "local" {
+        match state.db.get_machine_owner(&req.machine_id) {
             Ok(Some(owner)) if owner == caller.user.id => {}
             Ok(Some(_)) => {
-                return error_response(StatusCode::FORBIDDEN, "you don't own this node");
+                return error_response(StatusCode::FORBIDDEN, "you don't own this machine");
             }
             Ok(None) => {
-                return error_response(StatusCode::NOT_FOUND, "node not found");
+                return error_response(StatusCode::NOT_FOUND, "machine not found");
             }
             Err(e) => {
                 return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
@@ -306,163 +284,163 @@ async fn register_worker_handler(
         }
     }
 
-    match state.db.register_worker(&group_name, &req.name, &req.description, &req.instructions, &req.node_id, &req.runtime, &caller.user.id) {
-        Ok(worker) => (StatusCode::CREATED, Json(serde_json::to_value(worker).unwrap())).into_response(),
+    match state.db.register_agent(&workspace_name, &req.name, &req.description, &req.instructions, &req.machine_id, &req.runtime, &caller.user.id) {
+        Ok(agent) => (StatusCode::CREATED, Json(serde_json::to_value(agent).unwrap())).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-async fn list_workers_handler(
+async fn list_agents_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path(group_name): Path<String>,
+    Path(workspace_name): Path<String>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
-    match state.db.list_workers(&group_name) {
-        Ok(workers) => (StatusCode::OK, Json(serde_json::json!({"workers": workers}))).into_response(),
+    match state.db.list_agents(&workspace_name) {
+        Ok(agents) => (StatusCode::OK, Json(serde_json::json!({"agents": agents}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-async fn get_worker_handler(
+async fn get_agent_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path((group_name, name)): Path<(String, String)>,
+    Path((workspace_name, name)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
-    match state.db.get_worker(&group_name, &name) {
-        Ok(Some(worker)) => (StatusCode::OK, Json(serde_json::to_value(worker).unwrap())).into_response(),
-        Ok(None) => error_response(StatusCode::NOT_FOUND, "worker not found"),
+    match state.db.get_agent(&workspace_name, &name) {
+        Ok(Some(agent)) => (StatusCode::OK, Json(serde_json::to_value(agent).unwrap())).into_response(),
+        Ok(None) => error_response(StatusCode::NOT_FOUND, "agent not found"),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-async fn remove_worker_handler(
+async fn remove_agent_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path((group_name, name)): Path<(String, String)>,
+    Path((workspace_name, name)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
-    match state.db.remove_worker(&group_name, &name, &caller.user.id) {
+    match state.db.remove_agent(&workspace_name, &name, &caller.user.id) {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "removed"}))).into_response(),
         Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
     }
 }
 
-async fn update_worker_handler(
+async fn update_agent_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path((group_name, name)): Path<(String, String)>,
-    Json(req): Json<UpdateWorkerRequest>,
+    Path((workspace_name, name)): Path<(String, String)>,
+    Json(req): Json<UpdateAgentRequest>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
-    match state.db.update_worker_instructions(&group_name, &name, &req.instructions, &caller.user.id) {
+    match state.db.update_agent_instructions(&workspace_name, &name, &req.instructions, &caller.user.id) {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "updated"}))).into_response(),
         Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
     }
 }
 
-async fn stop_worker_handler(
+async fn stop_agent_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path((group_name, name)): Path<(String, String)>,
+    Path((workspace_name, name)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
-    match state.db.set_worker_status(&group_name, &name, "stopped", &caller.user.id) {
+    match state.db.set_agent_status(&workspace_name, &name, "stopped", &caller.user.id) {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "stopped"}))).into_response(),
         Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
     }
 }
 
-async fn start_worker_handler(
+async fn start_agent_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path((group_name, name)): Path<(String, String)>,
+    Path((workspace_name, name)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
-    match state.db.set_worker_status(&group_name, &name, "active", &caller.user.id) {
+    match state.db.set_agent_status(&workspace_name, &name, "active", &caller.user.id) {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "active"}))).into_response(),
         Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
     }
 }
 
-async fn worker_logs_handler(
+async fn agent_logs_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path((group_name, name)): Path<(String, String)>,
+    Path((workspace_name, name)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
-    match state.db.get_worker_logs(&group_name, &name, 20) {
+    match state.db.get_agent_logs(&workspace_name, &name, 20) {
         Ok(messages) => (StatusCode::OK, Json(serde_json::json!({"messages": messages}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-// --- Handlers: Nodes ---
+// --- Handlers: Machines ---
 
-async fn register_node_handler(
+async fn register_machine_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Json(req): Json<RegisterNodeRequest>,
+    Json(req): Json<RegisterMachineRequest>,
 ) -> impl IntoResponse {
-    match state.db.register_node(&req.id, &caller.user.id) {
-        Ok(node) => (StatusCode::CREATED, Json(serde_json::to_value(node).unwrap())).into_response(),
+    match state.db.register_machine(&req.id, &caller.user.id) {
+        Ok(machine) => (StatusCode::CREATED, Json(serde_json::to_value(machine).unwrap())).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-async fn list_nodes_handler(
+async fn list_machines_handler(
     State(state): State<SharedState>,
 ) -> impl IntoResponse {
-    match state.db.list_nodes() {
-        Ok(nodes) => (StatusCode::OK, Json(serde_json::json!({"nodes": nodes}))).into_response(),
+    match state.db.list_machines() {
+        Ok(machines) => (StatusCode::OK, Json(serde_json::json!({"machines": machines}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-async fn heartbeat_node_handler(
+async fn heartbeat_machine_handler(
     State(state): State<SharedState>,
-    Path(node_id): Path<String>,
+    Path(machine_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.heartbeat_node(&node_id) {
+    match state.db.heartbeat_machine(&machine_id) {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "ok"}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-// --- Handlers: Groups ---
+// --- Handlers: Workspaces ---
 
-async fn create_group_handler(
+async fn create_workspace_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Json(req): Json<CreateGroupRequest>,
+    Json(req): Json<CreateWorkspaceRequest>,
 ) -> impl IntoResponse {
-    match state.db.create_group(&req.name, &caller.user.id) {
-        Ok(group) => (StatusCode::CREATED, Json(serde_json::to_value(group).unwrap())).into_response(),
+    match state.db.create_workspace(&req.name, &caller.user.id) {
+        Ok(workspace) => (StatusCode::CREATED, Json(serde_json::to_value(workspace).unwrap())).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
-async fn list_groups_handler(
+async fn list_workspaces_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
 ) -> impl IntoResponse {
-    match state.db.list_groups_for_user(&caller.user.id) {
-        Ok(groups) => (StatusCode::OK, Json(serde_json::json!({"groups": groups}))).into_response(),
+    match state.db.list_workspaces_for_user(&caller.user.id) {
+        Ok(workspaces) => (StatusCode::OK, Json(serde_json::json!({"workspaces": workspaces}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
@@ -490,16 +468,16 @@ async fn invite_user_handler(
     }
 }
 
-async fn add_to_group_handler(
+async fn add_to_workspace_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path((group_name, user_id)): Path<(String, String)>,
+    Path((workspace_name, user_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    // Must be group creator or admin
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    // Must be workspace creator or admin
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
-    match state.db.add_group_member(&group_name, &user_id) {
+    match state.db.add_workspace_member(&workspace_name, &user_id) {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "added"}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -509,7 +487,7 @@ async fn add_to_group_handler(
 
 #[derive(Deserialize)]
 struct CreateCronRequest {
-    worker: String,
+    agent: String,
     schedule: String,
     task: String,
 }
@@ -523,17 +501,17 @@ struct UpdateCronRequest {
 async fn create_cron_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path(group_name): Path<String>,
+    Path(workspace_name): Path<String>,
     Json(req): Json<CreateCronRequest>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
     // Validate schedule
     if crate::scheduler::parse_schedule_secs(&req.schedule).is_none() {
         return error_response(StatusCode::BAD_REQUEST, "invalid schedule. Use: 30s, 5m, 1h, 6h, 1d");
     }
-    match state.db.create_cron_job(&group_name, &req.worker, &req.schedule, &req.task, &caller.user.id) {
+    match state.db.create_cron_job(&workspace_name, &req.agent, &req.schedule, &req.task, &caller.user.id) {
         Ok(job) => (StatusCode::CREATED, Json(serde_json::to_value(job).unwrap())).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -542,12 +520,12 @@ async fn create_cron_handler(
 async fn list_cron_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path(group_name): Path<String>,
+    Path(workspace_name): Path<String>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
-    match state.db.list_cron_jobs(&group_name) {
+    match state.db.list_cron_jobs(&workspace_name) {
         Ok(jobs) => (StatusCode::OK, Json(serde_json::json!({"cron_jobs": jobs}))).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -556,12 +534,12 @@ async fn list_cron_handler(
 async fn remove_cron_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path((group_name, cron_id)): Path<(String, String)>,
+    Path((workspace_name, cron_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
-    match state.db.remove_cron_job(&group_name, &cron_id, &caller.user.id) {
+    match state.db.remove_cron_job(&workspace_name, &cron_id, &caller.user.id) {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "removed"}))).into_response(),
         Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
     }
@@ -570,36 +548,36 @@ async fn remove_cron_handler(
 async fn update_cron_handler(
     State(state): State<SharedState>,
     Extension(caller): Extension<Caller>,
-    Path((group_name, cron_id)): Path<(String, String)>,
+    Path((workspace_name, cron_id)): Path<(String, String)>,
     Json(req): Json<UpdateCronRequest>,
 ) -> impl IntoResponse {
-    if let Err(e) = require_group_member(&state, &caller, &group_name) {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
     if let Some(enabled) = req.enabled {
-        if let Err(e) = state.db.set_cron_enabled(&group_name, &cron_id, enabled) {
+        if let Err(e) = state.db.set_cron_enabled(&workspace_name, &cron_id, enabled) {
             return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
         }
     }
     (StatusCode::OK, Json(serde_json::json!({"status": "updated"}))).into_response()
 }
 
-/// Returns all active workers on a node across all groups. Used by remote daemons.
-async fn node_workers_handler(
+/// Returns all active agents on a machine across all workspaces. Used by remote daemons.
+async fn machine_agents_handler(
     State(state): State<SharedState>,
-    Path(node_id): Path<String>,
+    Path(machine_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.db.get_all_active_workers_for_node(&node_id) {
-        Ok(workers) => {
-            let items: Vec<serde_json::Value> = workers
+    match state.db.get_all_active_agents_for_machine(&machine_id) {
+        Ok(agents) => {
+            let items: Vec<serde_json::Value> = agents
                 .into_iter()
-                .map(|(group, w)| {
-                    let mut v = serde_json::to_value(&w).unwrap();
-                    v["group"] = serde_json::Value::String(group);
+                .map(|(workspace, a)| {
+                    let mut v = serde_json::to_value(&a).unwrap();
+                    v["workspace"] = serde_json::Value::String(workspace);
                     v
                 })
                 .collect();
-            (StatusCode::OK, Json(serde_json::json!({"workers": items}))).into_response()
+            (StatusCode::OK, Json(serde_json::json!({"agents": items}))).into_response()
         }
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -631,29 +609,28 @@ pub fn build_router(state: SharedState) -> Router {
     let public = Router::new().route("/health", get(health_handler));
 
     let protected = Router::new()
-        .route("/groups", get(list_groups_handler).post(create_group_handler))
-        .route("/groups/{group_name}/members/{user_id}", post(add_to_group_handler))
-        .route("/groups/{group_name}/agents", post(register_agent_handler))
-        .route("/groups/{group_name}/agents/{agent_id}/inbox",
+        .route("/workspaces", get(list_workspaces_handler).post(create_workspace_handler))
+        .route("/workspaces/{workspace_name}/members/{user_id}", post(add_to_workspace_handler))
+        .route("/workspaces/{workspace_name}/agents/{agent_name}/inbox",
             get(get_inbox_messages_handler).post(send_inbox_message_handler))
-        .route("/groups/{group_name}/inbox/{message_id}/ack", post(ack_inbox_message_handler))
-        .route("/groups/{group_name}/threads/{thread_id}", get(get_thread_messages_handler))
-        .route("/groups/{group_name}/workers",
-            get(list_workers_handler).post(register_worker_handler))
-        .route("/groups/{group_name}/workers/{name}",
-            get(get_worker_handler).delete(remove_worker_handler).put(update_worker_handler))
-        .route("/groups/{group_name}/workers/{name}/stop", post(stop_worker_handler))
-        .route("/groups/{group_name}/workers/{name}/start", post(start_worker_handler))
-        .route("/groups/{group_name}/workers/{name}/logs", get(worker_logs_handler))
-        .route("/nodes", get(list_nodes_handler).post(register_node_handler))
-        .route("/nodes/{node_id}/heartbeat", post(heartbeat_node_handler))
-        .route("/nodes/{node_id}/workers", get(node_workers_handler))
+        .route("/workspaces/{workspace_name}/inbox/{message_id}/ack", post(ack_inbox_message_handler))
+        .route("/workspaces/{workspace_name}/threads/{thread_id}", get(get_thread_messages_handler))
+        .route("/workspaces/{workspace_name}/agents",
+            get(list_agents_handler).post(register_agent_handler))
+        .route("/workspaces/{workspace_name}/agents/{name}",
+            get(get_agent_handler).delete(remove_agent_handler).put(update_agent_handler))
+        .route("/workspaces/{workspace_name}/agents/{name}/stop", post(stop_agent_handler))
+        .route("/workspaces/{workspace_name}/agents/{name}/start", post(start_agent_handler))
+        .route("/workspaces/{workspace_name}/agents/{name}/logs", get(agent_logs_handler))
+        .route("/machines", get(list_machines_handler).post(register_machine_handler))
+        .route("/machines/{machine_id}/heartbeat", post(heartbeat_machine_handler))
+        .route("/machines/{machine_id}/agents", get(machine_agents_handler))
         .route("/users", get(list_users_handler))
         .route("/users/invite", post(invite_user_handler))
-        // Cron jobs (group-scoped)
-        .route("/groups/{group_name}/cron",
+        // Cron jobs (workspace-scoped)
+        .route("/workspaces/{workspace_name}/cron",
             get(list_cron_handler).post(create_cron_handler))
-        .route("/groups/{group_name}/cron/{cron_id}",
+        .route("/workspaces/{workspace_name}/cron/{cron_id}",
             delete(remove_cron_handler).put(update_cron_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
 
@@ -709,7 +686,7 @@ fn banner_separator() -> String {
 fn print_banner(
     server_url: &str,
     db_path: &str,
-    workers_path: &str,
+    agents_path: &str,
     api_key: Option<&str>,
     first_start: Option<(&str, &str, &str)>, // (key, user_name, user_id)
 ) {
@@ -739,7 +716,7 @@ fn print_banner(
         lines.push(banner_line(&format!("   User:       {} ({})", user_name, user_id)));
         lines.push(banner_empty());
         lines.push(banner_line("   CLI auto-configured. No login needed on this machine."));
-        lines.push(banner_line("   Next step:  b0 worker add <name> --instructions \"...\""));
+        lines.push(banner_line("   Next step:  b0 agent add <name> --instructions \"...\""));
         lines.push(banner_empty());
     }
 
@@ -751,7 +728,7 @@ fn print_banner(
     lines.push(banner_line("   1. b0 skill install claude-code"));
     lines.push(banner_line("      or: b0 skill install codex"));
     lines.push(banner_empty());
-    lines.push(banner_line("   2. b0 worker add <name> --instructions \"...\""));
+    lines.push(banner_line("   2. b0 agent add <name> --instructions \"...\""));
     lines.push(banner_empty());
     lines.push(banner_line("   3. Open Claude Code and start delegating."));
     lines.push(banner_empty());
@@ -760,7 +737,7 @@ fn print_banner(
     lines.push(banner_separator());
     lines.push(banner_empty());
     lines.push(banner_line(&format!("   Database:   {}", db_path)));
-    lines.push(banner_line(&format!("   Workers:    {}", workers_path)));
+    lines.push(banner_line(&format!("   Agents:     {}", agents_path)));
     lines.push(banner_empty());
     lines.push(banner_line("   Press Ctrl+C to stop."));
     lines.push(banner_empty());
@@ -796,17 +773,17 @@ pub async fn run(config: ServerConfig) {
     let workspace_root = std::path::Path::new(&config.db_path)
         .parent()
         .unwrap_or(std::path::Path::new("."))
-        .join("workers");
-    let workers_display = format!("{}/", workspace_root.display());
+        .join("agents");
+    let agents_display = format!("{}/", workspace_root.display());
 
     // Shorten paths for display: replace home dir with ~
     let db_display = match dirs::home_dir() {
         Some(home) => config.db_path.replace(&home.to_string_lossy().to_string(), "~"),
         None => config.db_path.clone(),
     };
-    let workers_display = match dirs::home_dir() {
-        Some(home) => workers_display.replace(&home.to_string_lossy().to_string(), "~"),
-        None => workers_display,
+    let agents_display = match dirs::home_dir() {
+        Some(home) => agents_display.replace(&home.to_string_lossy().to_string(), "~"),
+        None => agents_display,
     };
 
     // Bootstrap admin user on first start + auto-configure local CLI
@@ -815,7 +792,7 @@ pub async fn run(config: ServerConfig) {
             let mut cli_cfg = crate::config::CliConfig::load();
             cli_cfg.server_url = format!("http://127.0.0.1:{}", config.port);
             cli_cfg.api_key = Some(key.clone());
-            cli_cfg.default_group = Some(user.name.clone());
+            cli_cfg.default_workspace = Some(user.name.clone());
             let _ = cli_cfg.lead_id();
             if let Err(e) = cli_cfg.save() {
                 tracing::warn!("Failed to auto-configure CLI: {}", e);
@@ -826,9 +803,9 @@ pub async fn run(config: ServerConfig) {
         Err(e) => { tracing::error!("Failed to bootstrap admin: {}", e); None }
     };
 
-    // Auto-register "local" node owned by admin
+    // Auto-register "local" machine owned by admin
     if let Ok(Some(admin_id)) = db.get_admin_user_id() {
-        let _ = db.register_node("local", &admin_id);
+        let _ = db.register_machine("local", &admin_id);
     }
 
     // Resolve API key for dashboard URL: from first start or CLI config
@@ -839,14 +816,14 @@ pub async fn run(config: ServerConfig) {
     print_banner(
         &server_url,
         &db_display,
-        &workers_display,
+        &agents_display,
         api_key.as_deref(),
         first_start_info.as_ref().map(|(k, n, i)| (k.as_str(), n.as_str(), i.as_str())),
     );
 
     let state = Arc::new(AppState { db });
 
-    // Spawn daemon for "local" node
+    // Spawn daemon for "local" machine
     let daemon_state = state.clone();
     tokio::spawn(async move {
         daemon::run_local(daemon_state, workspace_root).await;

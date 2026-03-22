@@ -11,13 +11,13 @@ const MAX_CONCURRENT_TASKS: usize = 4;
 const TASK_TIMEOUT_SECS: u64 = 300;
 
 /// Session tracker for multi-turn conversations.
-/// Maps thread_id → Claude CLI session_id.
+/// Maps thread_id -> Claude CLI session_id.
 type Sessions = Arc<Mutex<HashMap<String, String>>>;
 
 // --- Local daemon (runs inside server process, direct DB access) ---
 
 pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
-    tracing::info!(workspace = %workspace_root.display(), "Node daemon started (local)");
+    tracing::info!(workspace = %workspace_root.display(), "Machine daemon started (local)");
 
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_TASKS));
     let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
@@ -25,20 +25,20 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
     let workspace_root = Arc::new(workspace_root);
 
     loop {
-        // Get workers across ALL tenants on the local node
-        let tenant_workers = match state.db.get_all_active_workers_for_node("local") {
-            Ok(w) => w,
+        // Get agents across ALL tenants on the local machine
+        let tenant_agents = match state.db.get_all_active_agents_for_machine("local") {
+            Ok(a) => a,
             Err(e) => {
-                tracing::error!("Failed to get workers: {}", e);
+                tracing::error!("Failed to get agents: {}", e);
                 tokio::time::sleep(poll_interval).await;
                 continue;
             }
         };
 
-        for (tenant, worker) in &tenant_workers {
+        for (tenant, agent) in &tenant_agents {
             let messages = match state
                 .db
-                .get_inbox_messages(tenant, &worker.name, Some("unread"), None)
+                .get_inbox_messages(tenant, &agent.name, Some("unread"), None)
             {
                 Ok(m) => m,
                 Err(_) => continue,
@@ -62,9 +62,9 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
 
                 let state = state.clone();
                 let tenant = tenant.clone();
-                let instructions = worker.instructions.clone();
-                let worker_name = worker.name.clone();
-                let worker_runtime = worker.runtime.clone();
+                let instructions = agent.instructions.clone();
+                let agent_name = agent.name.clone();
+                let agent_runtime = agent.runtime.clone();
                 let workspace_root = workspace_root.clone();
                 let sessions = sessions.clone();
                 let msg = msg.clone();
@@ -72,10 +72,10 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                 tokio::spawn(async move {
                     let _permit = permit;
 
-                    // Create worker directory if needed
-                    let worker_dir = workspace_root.join(&worker_name);
-                    if let Err(e) = tokio::fs::create_dir_all(&worker_dir).await {
-                        tracing::error!(worker = worker_name, error = %e, "Failed to create worker directory");
+                    // Create agent directory if needed
+                    let agent_dir = workspace_root.join(&agent_name);
+                    if let Err(e) = tokio::fs::create_dir_all(&agent_dir).await {
+                        tracing::error!(agent = agent_name, error = %e, "Failed to create agent directory");
                         return;
                     }
 
@@ -92,28 +92,28 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                         None
                     };
 
-                    let resolved_rt = resolve_runtime(&worker_runtime);
+                    let resolved_rt = resolve_runtime(&agent_runtime);
                     tracing::info!(
-                        worker = msg.to_agent,
+                        agent = msg.to_id,
                         thread = msg.thread_id,
                         runtime = resolved_rt,
-                        dir = %worker_dir.display(),
+                        dir = %agent_dir.display(),
                         resume = resume_session.is_some(),
                         "Processing task"
                     );
 
-                    // Notify lead agent that we started processing
+                    // Notify lead that we started processing
                     let _ = state.db.send_inbox_message(
                         &tenant,
                         &msg.thread_id,
-                        &msg.to_agent,
-                        &msg.from_agent,
+                        &msg.to_id,
+                        &msg.from_id,
                         "started",
                         None,
                     );
 
                     let result =
-                        invoke_runtime(&worker_runtime, &instructions, &task_content, resume_session.as_deref(), Some(&worker_dir))
+                        invoke_runtime(&agent_runtime, &instructions, &task_content, resume_session.as_deref(), Some(&agent_dir))
                             .await;
 
                     match result {
@@ -126,22 +126,22 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                             }
 
                             tracing::info!(
-                                worker = msg.to_agent,
+                                agent = msg.to_id,
                                 thread = msg.thread_id,
                                 "Task completed"
                             );
                             let _ = state.db.send_inbox_message(
                                 &tenant,
                                 &msg.thread_id,
-                                &msg.to_agent,
-                                &msg.from_agent,
+                                &msg.to_id,
+                                &msg.from_id,
                                 "done",
                                 Some(&serde_json::json!(output.text)),
                             );
                         }
                         Err(e) => {
                             tracing::error!(
-                                worker = msg.to_agent,
+                                agent = msg.to_id,
                                 thread = msg.thread_id,
                                 error = %e,
                                 "Task failed"
@@ -149,8 +149,8 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                             let _ = state.db.send_inbox_message(
                                 &tenant,
                                 &msg.thread_id,
-                                &msg.to_agent,
-                                &msg.from_agent,
+                                &msg.to_id,
+                                &msg.from_id,
                                 "failed",
                                 Some(&serde_json::json!(e.to_string())),
                             );
@@ -164,26 +164,26 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
     }
 }
 
-// --- Remote daemon (runs on a remote node, uses HTTP client) ---
+// --- Remote daemon (runs on a remote machine, uses HTTP client) ---
 
-pub async fn run_remote(server_url: &str, node_id: &str, api_key: Option<&str>) {
-    tracing::info!(node = node_id, "Node daemon started (remote)");
+pub async fn run_remote(server_url: &str, machine_id: &str, api_key: Option<&str>) {
+    tracing::info!(machine = machine_id, "Machine daemon started (remote)");
 
     let client = match api_key {
         Some(key) => BhClient::with_api_key(server_url, key),
         None => BhClient::new(server_url),
     };
 
-    // Register node
-    if let Err(e) = client.register_node(node_id).await {
-        tracing::error!("Failed to register node: {}", e);
+    // Register machine
+    if let Err(e) = client.register_machine(machine_id).await {
+        tracing::error!("Failed to register machine: {}", e);
         return;
     }
 
-    // Create workspace root for remote workers
+    // Create workspace root for remote agents
     let workspace_root = std::path::PathBuf::from(
         dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."))
-    ).join(".b0").join("workers");
+    ).join(".b0").join("agents");
     let workspace_root = Arc::new(workspace_root);
 
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_TASKS));
@@ -195,22 +195,22 @@ pub async fn run_remote(server_url: &str, node_id: &str, api_key: Option<&str>) 
     loop {
         // Periodic heartbeat
         if last_heartbeat.elapsed() >= heartbeat_interval {
-            let _ = client.heartbeat_node(node_id).await;
+            let _ = client.heartbeat_machine(machine_id).await;
             last_heartbeat = std::time::Instant::now();
         }
 
-        let workers = match client.node_workers(node_id).await {
-            Ok(w) => w,
+        let agents = match client.machine_agents(machine_id).await {
+            Ok(a) => a,
             Err(e) => {
-                tracing::error!("Failed to get workers: {}", e);
+                tracing::error!("Failed to get agents: {}", e);
                 tokio::time::sleep(poll_interval).await;
                 continue;
             }
         };
 
-        for (group, worker) in &workers {
+        for (workspace, agent) in &agents {
             let messages = match client
-                .get_inbox(group, &worker.name, Some("unread"), Some(0.0))
+                .get_inbox(workspace, &agent.name, Some("unread"), Some(0.0))
                 .await
             {
                 Ok(m) => m,
@@ -219,11 +219,11 @@ pub async fn run_remote(server_url: &str, node_id: &str, api_key: Option<&str>) 
 
             for msg in messages {
                 if msg.msg_type != "request" && msg.msg_type != "answer" {
-                    let _ = client.ack_message(group, &msg.id).await;
+                    let _ = client.ack_message(workspace, &msg.id).await;
                     continue;
                 }
 
-                let _ = client.ack_message(group, &msg.id).await;
+                let _ = client.ack_message(workspace, &msg.id).await;
 
                 let permit = match semaphore.clone().try_acquire_owned() {
                     Ok(p) => p,
@@ -231,10 +231,10 @@ pub async fn run_remote(server_url: &str, node_id: &str, api_key: Option<&str>) 
                 };
 
                 let client = client.clone();
-                let group = group.clone();
-                let worker_name = worker.name.clone();
-                let instructions = worker.instructions.clone();
-                let worker_runtime = worker.runtime.clone();
+                let workspace = workspace.clone();
+                let agent_name = agent.name.clone();
+                let instructions = agent.instructions.clone();
+                let agent_runtime = agent.runtime.clone();
                 let workspace_root = workspace_root.clone();
                 let sessions = sessions.clone();
                 let msg = msg.clone();
@@ -242,10 +242,10 @@ pub async fn run_remote(server_url: &str, node_id: &str, api_key: Option<&str>) 
                 tokio::spawn(async move {
                     let _permit = permit;
 
-                    // Create worker directory
-                    let worker_dir = workspace_root.join(&worker_name);
-                    if let Err(e) = tokio::fs::create_dir_all(&worker_dir).await {
-                        tracing::error!(worker = worker_name, error = %e, "Failed to create worker directory");
+                    // Create agent directory
+                    let agent_dir = workspace_root.join(&agent_name);
+                    if let Err(e) = tokio::fs::create_dir_all(&agent_dir).await {
+                        tracing::error!(agent = agent_name, error = %e, "Failed to create agent directory");
                         return;
                     }
 
@@ -262,29 +262,29 @@ pub async fn run_remote(server_url: &str, node_id: &str, api_key: Option<&str>) 
                         None
                     };
 
-                    let resolved_rt = resolve_runtime(&worker_runtime);
+                    let resolved_rt = resolve_runtime(&agent_runtime);
                     tracing::info!(
-                        worker = msg.to_agent,
+                        agent = msg.to_id,
                         thread = msg.thread_id,
                         runtime = resolved_rt,
-                        dir = %worker_dir.display(),
+                        dir = %agent_dir.display(),
                         "Processing task"
                     );
 
-                    // Notify lead agent that we started processing
+                    // Notify lead that we started processing
                     let _ = client
                         .send_message(
-                            &group,
-                            &msg.from_agent,
+                            &workspace,
+                            &msg.from_id,
                             &msg.thread_id,
-                            &msg.to_agent,
+                            &msg.to_id,
                             "started",
                             None,
                         )
                         .await;
 
                     let result =
-                        invoke_runtime(&worker_runtime, &instructions, &task_content, resume_session.as_deref(), Some(&worker_dir))
+                        invoke_runtime(&agent_runtime, &instructions, &task_content, resume_session.as_deref(), Some(&agent_dir))
                             .await;
 
                     match result {
@@ -298,10 +298,10 @@ pub async fn run_remote(server_url: &str, node_id: &str, api_key: Option<&str>) 
 
                             let _ = client
                                 .send_message(
-                                    &group,
-                                    &msg.from_agent,
+                                    &workspace,
+                                    &msg.from_id,
                                     &msg.thread_id,
-                                    &msg.to_agent,
+                                    &msg.to_id,
                                     "done",
                                     Some(&serde_json::json!(output.text)),
                                 )
@@ -310,10 +310,10 @@ pub async fn run_remote(server_url: &str, node_id: &str, api_key: Option<&str>) 
                         Err(e) => {
                             let _ = client
                                 .send_message(
-                                    &group,
-                                    &msg.from_agent,
+                                    &workspace,
+                                    &msg.from_id,
                                     &msg.thread_id,
-                                    &msg.to_agent,
+                                    &msg.to_id,
                                     "failed",
                                     Some(&serde_json::json!(e.to_string())),
                                 )

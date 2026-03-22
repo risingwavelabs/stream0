@@ -72,22 +72,19 @@ pub async fn run(state: SharedState) {
 
             tracing::info!(
                 cron_id = job.id,
-                worker = job.worker,
-                group = job.group_name,
+                agent = job.agent,
+                workspace = job.workspace_name,
                 "Scheduler: triggering cron job"
             );
 
-            // Register the lead agent if needed
-            let lead_id = format!("cron-{}", &job.id[..job.id.len().min(12)]);
-            let _ = state.db.register_agent(&job.group_name, &lead_id);
-
             // Create inbox message (same as b0 delegate)
+            let lead_id = format!("cron-{}", &job.id[..job.id.len().min(12)]);
             let thread_id = format!("thread-{}", &uuid::Uuid::new_v4().to_string()[..8]);
             let _ = state.db.send_inbox_message(
-                &job.group_name,
+                &job.workspace_name,
                 &thread_id,
                 &lead_id,
-                &job.worker,
+                &job.agent,
                 "request",
                 Some(&serde_json::json!(job.task)),
             );

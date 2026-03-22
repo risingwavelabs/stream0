@@ -553,12 +553,12 @@ tr:hover td { background: rgba(59,130,246,0.02); }
     <div class="sidebar-logo">Box<span>0</span></div>
     <div class="sidebar-nav">
       <a href="#/dashboard" data-page="dashboard"><span class="nav-icon">D</span> Dashboard</a>
-      <a href="#/groups" data-page="groups"><span class="nav-icon">G</span> Groups</a>
+      <a href="#/workspaces" data-page="workspaces"><span class="nav-icon">W</span> Workspaces</a>
       <a href="#/users" data-page="users"><span class="nav-icon">U</span> Users</a>
     </div>
     <div class="sidebar-group">
-      <label>Group</label>
-      <select id="group-select" onchange="App.setGroup(this.value)"></select>
+      <label>Workspace</label>
+      <select id="workspace-select" onchange="App.setWorkspace(this.value)"></select>
     </div>
     <div class="sidebar-footer">
       <div class="user-name" id="user-name"></div>
@@ -634,7 +634,7 @@ App.auth = {
     var key = document.getElementById('login-key').value.trim();
     if (!key) return;
     App.api.key = key;
-    App.api.get('/groups').then(function(data) {
+    App.api.get('/workspaces').then(function(data) {
       localStorage.setItem('b0_api_key', key);
       App.boot(data);
     }).catch(function() {
@@ -646,7 +646,7 @@ App.auth = {
 
   logout: function() {
     localStorage.removeItem('b0_api_key');
-    localStorage.removeItem('b0_group');
+    localStorage.removeItem('b0_workspace');
     App.api.key = null;
     document.getElementById('login-page').classList.remove('hidden');
     document.getElementById('app-layout').classList.add('hidden');
@@ -658,7 +658,7 @@ App.auth = {
     var key = localStorage.getItem('b0_api_key');
     if (!key) return;
     App.api.key = key;
-    App.api.get('/groups').then(function(data) {
+    App.api.get('/workspaces').then(function(data) {
       App.boot(data);
     }).catch(function() {
       localStorage.removeItem('b0_api_key');
@@ -670,44 +670,44 @@ App.auth = {
 // ============================================================
 // App.boot
 // ============================================================
-App.groups = [];
-App.currentGroup = null;
+App.workspaces = [];
+App.currentWorkspace = null;
 
 App.boot = function(data) {
-  App.groups = data.groups || [];
+  App.workspaces = data.workspaces || [];
   document.getElementById('login-page').classList.add('hidden');
   document.getElementById('app-layout').classList.remove('hidden');
 
-  var sel = document.getElementById('group-select');
+  var sel = document.getElementById('workspace-select');
   sel.innerHTML = '';
-  App.groups.forEach(function(g) {
+  App.workspaces.forEach(function(w) {
     var opt = document.createElement('option');
-    opt.value = g.name;
-    opt.textContent = g.name;
+    opt.value = w.name;
+    opt.textContent = w.name;
     sel.appendChild(opt);
   });
 
-  var saved = localStorage.getItem('b0_group');
-  if (saved && App.groups.some(function(g) { return g.name === saved; })) {
+  var saved = localStorage.getItem('b0_workspace');
+  if (saved && App.workspaces.some(function(w) { return w.name === saved; })) {
     sel.value = saved;
-    App.currentGroup = saved;
-  } else if (App.groups.length > 0) {
-    App.currentGroup = App.groups[0].name;
-    sel.value = App.currentGroup;
+    App.currentWorkspace = saved;
+  } else if (App.workspaces.length > 0) {
+    App.currentWorkspace = App.workspaces[0].name;
+    sel.value = App.currentWorkspace;
   }
 
   document.getElementById('user-name').textContent = '';
   App.router.start();
 };
 
-App.setGroup = function(name) {
-  App.currentGroup = name;
-  localStorage.setItem('b0_group', name);
+App.setWorkspace = function(name) {
+  App.currentWorkspace = name;
+  localStorage.setItem('b0_workspace', name);
   App.router.navigate(location.hash || '#/dashboard');
 };
 
-App.groupPath = function(path) {
-  return '/groups/' + encodeURIComponent(App.currentGroup) + path;
+App.workspacePath = function(path) {
+  return '/workspaces/' + encodeURIComponent(App.currentWorkspace) + path;
 };
 
 // ============================================================
@@ -716,7 +716,7 @@ App.groupPath = function(path) {
 App.router = {
   routes: {
     '/dashboard': function() { App.dashboard.render(); },
-    '/groups': function() { App.groupsPage.render(); },
+    '/workspaces': function() { App.workspacesPage.render(); },
     '/users': function() { App.usersPage.render(); }
   },
 
@@ -736,8 +736,8 @@ App.router = {
 
     var parts = path.split('/').filter(Boolean);
 
-    // /workers/detail/{name}
-    if (parts[0] === 'workers' && parts[1] === 'detail' && parts[2]) {
+    // /agents/detail/{name}
+    if (parts[0] === 'agents' && parts[1] === 'detail' && parts[2]) {
       var workerName = decodeURIComponent(parts[2]);
       var threadId = parts[3] ? decodeURIComponent(parts[3]) : null;
       App.detail.render(workerName, threadId);
@@ -827,12 +827,7 @@ App.webAgent = {
 
   ensureRegistered: function() {
     var agentId = App.webAgent.getId();
-    return App.api.post(App.groupPath('/agents'), { id: agentId }).then(function() {
-      return agentId;
-    }).catch(function() {
-      // Agent may already be registered
-      return agentId;
-    });
+    return Promise.resolve(agentId);
   }
 };
 
@@ -845,7 +840,7 @@ App.poll = {
   start: function(threadId, workerName, callback) {
     App.poll.stop(threadId);
     var tick = function() {
-      App.api.get(App.groupPath('/threads/' + encodeURIComponent(threadId))).then(function(data) {
+      App.api.get(App.workspacePath('/threads/' + encodeURIComponent(threadId))).then(function(data) {
         var msgs = data.messages || [];
         if (msgs.length > 0) {
           var last = msgs[msgs.length - 1];
@@ -881,26 +876,26 @@ App.poll = {
 // ============================================================
 App.dashboard = {
   render: function() {
-    if (!App.currentGroup) {
-      setContent('<div class="empty-state"><p>No group selected. Create a group in the Groups page.</p></div>');
+    if (!App.currentWorkspace) {
+      setContent('<div class="empty-state"><p>No workspace selected. Create a workspace in the Workspaces page.</p></div>');
       return;
     }
     App.poll.stopAll();
     showLoading();
 
     Promise.all([
-      App.api.get('/nodes'),
-      App.api.get(App.groupPath('/workers'))
+      App.api.get('/machines'),
+      App.api.get(App.workspacePath('/agents'))
     ]).then(function(results) {
-      var nodes = results[0].nodes || [];
-      var workers = results[1].workers || [];
+      var machines = results[0].machines || [];
+      var agents = results[1].agents || [];
 
-      // Get thread counts for each worker
-      var threadPromises = workers.map(function(w) {
-        return App.api.get(App.groupPath('/workers/' + encodeURIComponent(w.name) + '/threads')).then(function(data) {
-          return { name: w.name, threads: data.threads || [] };
+      // Get thread counts for each agent
+      var threadPromises = agents.map(function(a) {
+        return App.api.get(App.workspacePath('/agents/' + encodeURIComponent(a.name) + '/threads')).then(function(data) {
+          return { name: a.name, threads: data.threads || [] };
         }).catch(function() {
-          return { name: w.name, threads: [] };
+          return { name: a.name, threads: [] };
         });
       });
 
@@ -910,12 +905,12 @@ App.dashboard = {
           threadMap[t.name] = t.threads;
         });
 
-        // Group workers by node
-        var nodeWorkers = {};
-        workers.forEach(function(w) {
-          var nid = w.node_id || 'unknown';
-          if (!nodeWorkers[nid]) nodeWorkers[nid] = [];
-          nodeWorkers[nid].push(w);
+        // Group agents by machine
+        var machineAgents = {};
+        agents.forEach(function(a) {
+          var mid = a.machine_id || 'unknown';
+          if (!machineAgents[mid]) machineAgents[mid] = [];
+          machineAgents[mid].push(a);
         });
 
         var html = '';
@@ -924,26 +919,26 @@ App.dashboard = {
         html += '<button class="btn btn-primary" onclick="App.quickTask.show()">+ Quick Task</button>';
         html += '</div>';
 
-        if (nodes.length === 0 && workers.length === 0) {
-          html += '<div class="card"><div class="empty-state"><p>No nodes or workers yet. Add a worker to get started.</p></div></div>';
+        if (machines.length === 0 && agents.length === 0) {
+          html += '<div class="card"><div class="empty-state"><p>No machines or agents yet. Add an agent to get started.</p></div></div>';
         }
 
-        nodes.forEach(function(n) {
-          var nWorkers = nodeWorkers[n.id] || [];
+        machines.forEach(function(m) {
+          var mAgents = machineAgents[m.id] || [];
           html += '<div class="card" style="margin-bottom:16px">';
           html += '<div class="card-header">';
-          html += statusDot(n.status) + ' <strong>' + esc(n.id) + '</strong>';
-          if (n.last_heartbeat) {
-            html += '<span style="font-weight:normal;color:var(--text-secondary);font-size:12px">Last heartbeat: ' + timeAgo(n.last_heartbeat) + '</span>';
+          html += statusDot(m.status) + ' <strong>' + esc(m.id) + '</strong>';
+          if (m.last_heartbeat) {
+            html += '<span style="font-weight:normal;color:var(--text-secondary);font-size:12px">Last heartbeat: ' + timeAgo(m.last_heartbeat) + '</span>';
           }
           html += '</div>';
 
-          if (nWorkers.length === 0) {
-            html += '<div class="card-body"><p style="color:var(--text-secondary);font-size:13px">No workers on this node.</p></div>';
+          if (mAgents.length === 0) {
+            html += '<div class="card-body"><p style="color:var(--text-secondary);font-size:13px">No agents on this machine.</p></div>';
           } else {
             html += '<div class="workers-grid">';
-            nWorkers.forEach(function(w) {
-              var threads = threadMap[w.name] || [];
+            mAgents.forEach(function(a) {
+              var threads = threadMap[a.name] || [];
               var threadCount = threads.length;
               // Check for question/failed indicators
               var hasQuestion = threads.some(function(t) { return t.latest_type === 'question'; });
@@ -952,9 +947,9 @@ App.dashboard = {
               if (hasQuestion) blockClass += ' has-question';
               else if (hasFailed) blockClass += ' has-failed';
 
-              html += '<div class="' + blockClass + '" onclick="App.router.navigate(\'#/workers/detail/' + encodeURIComponent(w.name) + '\')">';
-              html += '<div class="wb-name">' + esc(w.name) + '</div>';
-              html += '<div class="wb-status">' + statusDot(w.status) + '</div>';
+              html += '<div class="' + blockClass + '" onclick="App.router.navigate(\'#/agents/detail/' + encodeURIComponent(a.name) + '\')">';
+              html += '<div class="wb-name">' + esc(a.name) + '</div>';
+              html += '<div class="wb-status">' + statusDot(a.status) + '</div>';
               html += '<div class="wb-threads">' + threadCount + ' thread' + (threadCount !== 1 ? 's' : '') + '</div>';
               html += '</div>';
             });
@@ -963,20 +958,20 @@ App.dashboard = {
           html += '</div>';
         });
 
-        // Workers on unknown nodes
-        var knownNodeIds = nodes.map(function(n) { return n.id; });
-        var orphanWorkers = workers.filter(function(w) {
-          return knownNodeIds.indexOf(w.node_id) === -1;
+        // Agents on unknown machines
+        var knownMachineIds = machines.map(function(m) { return m.id; });
+        var orphanAgents = agents.filter(function(a) {
+          return knownMachineIds.indexOf(a.machine_id) === -1;
         });
-        if (orphanWorkers.length > 0) {
+        if (orphanAgents.length > 0) {
           html += '<div class="card" style="margin-bottom:16px">';
-          html += '<div class="card-header"><strong>' + esc(orphanWorkers[0].node_id || 'unknown') + '</strong></div>';
+          html += '<div class="card-header"><strong>' + esc(orphanAgents[0].machine_id || 'unknown') + '</strong></div>';
           html += '<div class="workers-grid">';
-          orphanWorkers.forEach(function(w) {
-            var threads = threadMap[w.name] || [];
-            html += '<div class="worker-block" onclick="App.router.navigate(\'#/workers/detail/' + encodeURIComponent(w.name) + '\')">';
-            html += '<div class="wb-name">' + esc(w.name) + '</div>';
-            html += '<div class="wb-status">' + statusDot(w.status) + '</div>';
+          orphanAgents.forEach(function(a) {
+            var threads = threadMap[a.name] || [];
+            html += '<div class="worker-block" onclick="App.router.navigate(\'#/agents/detail/' + encodeURIComponent(a.name) + '\')">';
+            html += '<div class="wb-name">' + esc(a.name) + '</div>';
+            html += '<div class="wb-status">' + statusDot(a.status) + '</div>';
             html += '<div class="wb-threads">' + threads.length + ' threads</div>';
             html += '</div>';
           });
@@ -998,14 +993,14 @@ App.detail = {
   _expandedThread: null,
 
   render: function(name, expandThreadId) {
-    if (!App.currentGroup) return;
+    if (!App.currentWorkspace) return;
     App.poll.stopAll();
     App.detail._expandedThread = expandThreadId || null;
     showLoading();
 
     Promise.all([
-      App.api.get(App.groupPath('/workers/' + encodeURIComponent(name))),
-      App.api.get(App.groupPath('/workers/' + encodeURIComponent(name) + '/threads'))
+      App.api.get(App.workspacePath('/agents/' + encodeURIComponent(name))),
+      App.api.get(App.workspacePath('/agents/' + encodeURIComponent(name) + '/threads'))
     ]).then(function(results) {
       var w = results[0];
       var threads = results[1].threads || [];
@@ -1033,7 +1028,7 @@ App.detail = {
       html += '<dl class="detail-grid">';
       html += '<dt>Name</dt><dd>' + esc(w.name) + '</dd>';
       html += '<dt>Description</dt><dd>' + esc(w.description || '(none)') + '</dd>';
-      html += '<dt>Node</dt><dd>' + esc(w.node_id) + '</dd>';
+      html += '<dt>Machine</dt><dd>' + esc(w.machine_id) + '</dd>';
       html += '<dt>Runtime</dt><dd>' + esc(w.runtime) + '</dd>';
       html += '<dt>Status</dt><dd>' + statusDot(w.status) + '</dd>';
       if (w.instructions) {
@@ -1073,7 +1068,7 @@ App.detail = {
         App.detail.toggleThread(expandThreadId, w.name);
       }
     }).catch(function(err) {
-      App.toast.error('Failed to load worker: ' + err.message);
+      App.toast.error('Failed to load agent: ' + err.message);
     });
   },
 
@@ -1100,7 +1095,7 @@ App.detail = {
     container.style.display = 'block';
     container.innerHTML = '<div class="convo-area"><div class="loading"><span class="spinner"></span></div></div>';
 
-    App.api.get(App.groupPath('/threads/' + encodeURIComponent(threadId))).then(function(data) {
+    App.api.get(App.workspacePath('/threads/' + encodeURIComponent(threadId))).then(function(data) {
       var msgs = data.messages || [];
       App.detail._renderConvo(container, msgs, threadId, workerName);
 
@@ -1128,8 +1123,8 @@ App.detail = {
       msgs.forEach(function(m) {
         html += '<div class="thread-msg">';
         html += '<div class="thread-msg-header">';
-        html += '<strong>' + esc(m.from_agent || m.from) + '</strong>';
-        html += ' &rarr; ' + esc(m.to_agent || m.to);
+        html += '<strong>' + esc(m.from_id || m.from) + '</strong>';
+        html += ' &rarr; ' + esc(m.to_id || m.to);
         html += ' <span class="thread-msg-type ' + esc(m.msg_type || m.type) + '">' + esc(m.msg_type || m.type) + '</span>';
         html += ' <span style="margin-left:auto">' + timeAgo(m.created_at) + '</span>';
         html += '</div>';
@@ -1172,7 +1167,7 @@ App.detail = {
     input.disabled = true;
 
     App.webAgent.ensureRegistered().then(function(agentId) {
-      return App.api.post(App.groupPath('/agents/' + encodeURIComponent(workerName) + '/inbox'), {
+      return App.api.post(App.workspacePath('/agents/' + encodeURIComponent(workerName) + '/inbox'), {
         thread_id: threadId,
         from: agentId,
         type: 'answer',
@@ -1211,7 +1206,7 @@ App.detail = {
 
     App.webAgent.ensureRegistered().then(function(agentId) {
       var threadId = 'thread-' + crypto.randomUUID().slice(0, 8);
-      return App.api.post(App.groupPath('/agents/' + encodeURIComponent(workerName) + '/inbox'), {
+      return App.api.post(App.workspacePath('/agents/' + encodeURIComponent(workerName) + '/inbox'), {
         thread_id: threadId,
         from: agentId,
         type: 'request',
@@ -1223,30 +1218,30 @@ App.detail = {
       document.querySelector('.modal-overlay').remove();
       App.toast.success('Conversation started');
       // Navigate to worker detail with thread expanded
-      App.router.navigate('#/workers/detail/' + encodeURIComponent(workerName) + '/' + encodeURIComponent(threadId));
+      App.router.navigate('#/agents/detail/' + encodeURIComponent(workerName) + '/' + encodeURIComponent(threadId));
     }).catch(function(err) {
       App.toast.error('Failed: ' + err.message);
     });
   },
 
   stop: function(name) {
-    App.api.post(App.groupPath('/workers/' + encodeURIComponent(name) + '/stop')).then(function() {
-      App.toast.success('Worker stopped');
+    App.api.post(App.workspacePath('/agents/' + encodeURIComponent(name) + '/stop')).then(function() {
+      App.toast.success('Agent stopped');
       App.detail.render(name);
     }).catch(function(err) { App.toast.error('Failed: ' + err.message); });
   },
 
   start: function(name) {
-    App.api.post(App.groupPath('/workers/' + encodeURIComponent(name) + '/start')).then(function() {
-      App.toast.success('Worker started');
+    App.api.post(App.workspacePath('/agents/' + encodeURIComponent(name) + '/start')).then(function() {
+      App.toast.success('Agent started');
       App.detail.render(name);
     }).catch(function(err) { App.toast.error('Failed: ' + err.message); });
   },
 
   remove: function(name) {
-    if (!confirm('Remove worker "' + name + '"?')) return;
-    App.api.del(App.groupPath('/workers/' + encodeURIComponent(name))).then(function() {
-      App.toast.success('Worker removed');
+    if (!confirm('Remove agent "' + name + '"?')) return;
+    App.api.del(App.workspacePath('/agents/' + encodeURIComponent(name))).then(function() {
+      App.toast.success('Agent removed');
       App.router.navigate('#/dashboard');
     }).catch(function(err) { App.toast.error('Failed: ' + err.message); });
   }
@@ -1257,20 +1252,20 @@ App.detail = {
 // ============================================================
 App.quickTask = {
   show: function() {
-    App.api.get('/nodes').then(function(data) {
-      var nodes = data.nodes || [];
+    App.api.get('/machines').then(function(data) {
+      var machines = data.machines || [];
       var html = '<div class="modal-overlay" onclick="if(event.target===this)this.remove()">';
       html += '<div class="modal">';
       html += '<div class="modal-header">Quick Task<button class="btn-icon" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button></div>';
       html += '<div class="modal-body">';
       html += '<div class="form-group"><label>Instructions</label><textarea id="qt-instructions" placeholder="e.g. Review code carefully, focus on security..."></textarea></div>';
-      html += '<div class="form-group"><label>Task</label><textarea id="qt-task" placeholder="What should this worker do?"></textarea></div>';
+      html += '<div class="form-group"><label>Task</label><textarea id="qt-task" placeholder="What should this agent do?"></textarea></div>';
       html += '<div class="form-row">';
-      html += '<div class="form-group"><label>Node</label><select id="qt-node">';
-      nodes.forEach(function(n) {
-        html += '<option value="' + escAttr(n.id) + '">' + esc(n.id) + '</option>';
+      html += '<div class="form-group"><label>Machine</label><select id="qt-machine">';
+      machines.forEach(function(m) {
+        html += '<option value="' + escAttr(m.id) + '">' + esc(m.id) + '</option>';
       });
-      if (nodes.length === 0) html += '<option value="local">local</option>';
+      if (machines.length === 0) html += '<option value="local">local</option>';
       html += '</select></div>';
       html += '<div class="form-group"><label>Runtime</label><select id="qt-runtime">';
       html += '<option value="auto">auto</option>';
@@ -1286,14 +1281,14 @@ App.quickTask = {
       document.body.insertAdjacentHTML('beforeend', html);
       document.getElementById('qt-instructions').focus();
     }).catch(function(err) {
-      App.toast.error('Failed to load nodes: ' + err.message);
+      App.toast.error('Failed to load machines: ' + err.message);
     });
   },
 
   run: function() {
     var instructions = document.getElementById('qt-instructions').value.trim();
     var task = document.getElementById('qt-task').value.trim();
-    var node = document.getElementById('qt-node').value;
+    var machine = document.getElementById('qt-machine').value;
     var runtime = document.getElementById('qt-runtime').value;
 
     if (!instructions || !task) {
@@ -1301,32 +1296,32 @@ App.quickTask = {
       return;
     }
 
-    var workerName = 'task-' + crypto.randomUUID().slice(0, 8);
+    var agentName = 'task-' + crypto.randomUUID().slice(0, 8);
 
-    // Create worker
-    App.api.post(App.groupPath('/workers'), {
-      name: workerName,
+    // Create agent
+    App.api.post(App.workspacePath('/agents'), {
+      name: agentName,
       description: 'Quick task',
       instructions: instructions,
-      node_id: node,
+      machine_id: machine,
       runtime: runtime
     }).then(function() {
       // Send task as conversation
-      return App.webAgent.ensureRegistered().then(function(agentId) {
+      return App.webAgent.ensureRegistered().then(function(webAgentId) {
         var threadId = 'thread-' + crypto.randomUUID().slice(0, 8);
-        return App.api.post(App.groupPath('/agents/' + encodeURIComponent(workerName) + '/inbox'), {
+        return App.api.post(App.workspacePath('/agents/' + encodeURIComponent(agentName) + '/inbox'), {
           thread_id: threadId,
-          from: agentId,
+          from: webAgentId,
           type: 'request',
           content: task
         }).then(function() {
-          return { workerName: workerName, threadId: threadId };
+          return { agentName: agentName, threadId: threadId };
         });
       });
     }).then(function(result) {
       document.querySelector('.modal-overlay').remove();
       App.toast.success('Quick task started');
-      App.router.navigate('#/workers/detail/' + encodeURIComponent(result.workerName) + '/' + encodeURIComponent(result.threadId));
+      App.router.navigate('#/agents/detail/' + encodeURIComponent(result.agentName) + '/' + encodeURIComponent(result.threadId));
     }).catch(function(err) {
       App.toast.error('Failed: ' + err.message);
     });
@@ -1334,33 +1329,33 @@ App.quickTask = {
 };
 
 // ============================================================
-// App.groupsPage
+// App.workspacesPage
 // ============================================================
-App.groupsPage = {
+App.workspacesPage = {
   render: function() {
     App.poll.stopAll();
     showLoading();
-    App.api.get('/groups').then(function(data) {
-      var groups = data.groups || [];
+    App.api.get('/workspaces').then(function(data) {
+      var workspaces = data.workspaces || [];
 
       var html = '';
-      html += '<div class="page-header"><h2>Groups</h2>';
-      html += '<button class="btn btn-primary" onclick="App.groupsPage.showCreate()">+ Create Group</button>';
+      html += '<div class="page-header"><h2>Workspaces</h2>';
+      html += '<button class="btn btn-primary" onclick="App.workspacesPage.showCreate()">+ Create Workspace</button>';
       html += '</div>';
 
       html += '<div class="card">';
-      if (groups.length === 0) {
-        html += '<div class="empty-state"><p>No groups yet.</p></div>';
+      if (workspaces.length === 0) {
+        html += '<div class="empty-state"><p>No workspaces yet.</p></div>';
       } else {
         html += '<table>';
         html += '<thead><tr><th>Name</th><th>Created By</th><th>Created</th><th></th></tr></thead>';
         html += '<tbody>';
-        groups.forEach(function(g) {
+        workspaces.forEach(function(w) {
           html += '<tr>';
-          html += '<td><strong>' + esc(g.name) + '</strong></td>';
-          html += '<td>' + esc(g.created_by) + '</td>';
-          html += '<td>' + timeAgo(g.created_at) + '</td>';
-          html += '<td><button class="btn btn-sm btn-outline" onclick="App.groupsPage.showAddMember(\'' + escAttr(g.name) + '\')">Add Member</button></td>';
+          html += '<td><strong>' + esc(w.name) + '</strong></td>';
+          html += '<td>' + esc(w.created_by) + '</td>';
+          html += '<td>' + timeAgo(w.created_at) + '</td>';
+          html += '<td><button class="btn btn-sm btn-outline" onclick="App.workspacesPage.showAddMember(\'' + escAttr(w.name) + '\')">Add Member</button></td>';
           html += '</tr>';
         });
         html += '</tbody></table>';
@@ -1369,70 +1364,70 @@ App.groupsPage = {
 
       setContent(html);
     }).catch(function(err) {
-      App.toast.error('Failed to load groups: ' + err.message);
+      App.toast.error('Failed to load workspaces: ' + err.message);
     });
   },
 
   showCreate: function() {
     var html = '<div class="modal-overlay" onclick="if(event.target===this)this.remove()">';
     html += '<div class="modal">';
-    html += '<div class="modal-header">Create Group<button class="btn-icon" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button></div>';
+    html += '<div class="modal-header">Create Workspace<button class="btn-icon" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button></div>';
     html += '<div class="modal-body">';
-    html += '<div class="form-group"><label>Group Name</label><input id="create-group-name" placeholder="e.g. my-team"></div>';
+    html += '<div class="form-group"><label>Workspace Name</label><input id="create-workspace-name" placeholder="e.g. my-team"></div>';
     html += '</div>';
     html += '<div class="modal-footer">';
     html += '<button class="btn btn-outline" onclick="this.closest(\'.modal-overlay\').remove()">Cancel</button>';
-    html += '<button class="btn btn-primary" onclick="App.groupsPage.create()">Create</button>';
+    html += '<button class="btn btn-primary" onclick="App.workspacesPage.create()">Create</button>';
     html += '</div></div></div>';
     document.body.insertAdjacentHTML('beforeend', html);
-    document.getElementById('create-group-name').focus();
+    document.getElementById('create-workspace-name').focus();
   },
 
   create: function() {
-    var name = document.getElementById('create-group-name').value.trim();
+    var name = document.getElementById('create-workspace-name').value.trim();
     if (!name) { App.toast.error('Name is required'); return; }
-    App.api.post('/groups', { name: name }).then(function() {
+    App.api.post('/workspaces', { name: name }).then(function() {
       document.querySelector('.modal-overlay').remove();
-      App.toast.success('Group "' + name + '" created');
-      // Refresh group selector
-      App.api.get('/groups').then(function(data) {
-        App.groups = data.groups || [];
-        var sel = document.getElementById('group-select');
+      App.toast.success('Workspace "' + name + '" created');
+      // Refresh workspace selector
+      App.api.get('/workspaces').then(function(data) {
+        App.workspaces = data.workspaces || [];
+        var sel = document.getElementById('workspace-select');
         sel.innerHTML = '';
-        App.groups.forEach(function(g) {
+        App.workspaces.forEach(function(w) {
           var opt = document.createElement('option');
-          opt.value = g.name;
-          opt.textContent = g.name;
+          opt.value = w.name;
+          opt.textContent = w.name;
           sel.appendChild(opt);
         });
-        if (App.currentGroup) sel.value = App.currentGroup;
+        if (App.currentWorkspace) sel.value = App.currentWorkspace;
       });
-      App.groupsPage.render();
+      App.workspacesPage.render();
     }).catch(function(err) { App.toast.error('Failed: ' + err.message); });
   },
 
-  showAddMember: function(groupName) {
+  showAddMember: function(workspaceName) {
     var html = '<div class="modal-overlay" onclick="if(event.target===this)this.remove()">';
     html += '<div class="modal">';
-    html += '<div class="modal-header">Add Member to ' + esc(groupName) + '<button class="btn-icon" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button></div>';
+    html += '<div class="modal-header">Add Member to ' + esc(workspaceName) + '<button class="btn-icon" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button></div>';
     html += '<div class="modal-body">';
     html += '<div class="form-group"><label>User ID</label><input id="add-member-id" placeholder="User ID"></div>';
     html += '</div>';
     html += '<div class="modal-footer">';
     html += '<button class="btn btn-outline" onclick="this.closest(\'.modal-overlay\').remove()">Cancel</button>';
-    html += '<button class="btn btn-primary" onclick="App.groupsPage.addMember(\'' + escAttr(groupName) + '\')">Add</button>';
+    html += '<button class="btn btn-primary" onclick="App.workspacesPage.addMember(\'' + escAttr(workspaceName) + '\')">Add</button>';
     html += '</div></div></div>';
     document.body.insertAdjacentHTML('beforeend', html);
     document.getElementById('add-member-id').focus();
   },
 
-  addMember: function(groupName) {
+  addMember: function(workspaceName) {
     var userId = document.getElementById('add-member-id').value.trim();
     if (!userId) { App.toast.error('User ID is required'); return; }
-    App.api.post('/groups/' + encodeURIComponent(groupName) + '/members/' + encodeURIComponent(userId)).then(function() {
+    App.api.post('/workspaces/' + encodeURIComponent(workspaceName) + '/members/' + encodeURIComponent(userId)).then(function() {
       document.querySelector('.modal-overlay').remove();
       App.toast.success('Member added');
-      App.groupsPage.render();
+      App.workspacesPage.render();
     }).catch(function(err) { App.toast.error('Failed: ' + err.message); });
   }
 };
@@ -1530,7 +1525,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Clean the URL so the key is not left in the address bar
     window.history.replaceState({}, '', window.location.pathname);
     App.api.key = urlKey;
-    App.api.get('/groups').then(function(data) {
+    App.api.get('/workspaces').then(function(data) {
       localStorage.setItem('b0_api_key', urlKey);
       App.boot(data);
     }).catch(function() {
