@@ -196,44 +196,82 @@ The server is at: {server_url}
 
 When the user's request could benefit from specialized workers or parallel execution, delegate.
 
-First, run `b0 worker ls` to see available workers and their descriptions. Match workers to the task automatically. You do not need the user to name specific workers.
+Run `b0 worker ls` to see available workers and their descriptions. Match workers to the task based on their descriptions. You do not need the user to name specific workers.
 
 ## Commands
 
 ```bash
-# Delegate a task (non-blocking, returns immediately with thread ID)
-b0 delegate <worker> "<detailed task prompt>"
-
-# Continue a conversation with the same worker
-b0 delegate --thread <thread-id> <worker> "<follow-up message>"
-
-# Wait for results
-b0 wait
-
-# Quick one-off task (no named worker needed)
-b0 worker temp "<task>"
-
-# List available workers
-b0 worker ls
+b0 worker ls                                          # list available workers
+b0 delegate <worker> "<detailed task prompt>"         # send task (non-blocking)
+b0 delegate --thread <id> <worker> "<follow-up>"      # continue conversation
+b0 wait                                                # collect all pending results
+b0 reply <thread-id> "<answer>"                        # answer a worker's question
+b0 status                                              # check pending tasks
+b0 worker temp "<task>"                                # one-off task, no named worker
 ```
 
 ## How to write delegation prompts
 
-Do NOT just forward the user's words. Compose a complete, actionable prompt:
+This is critical. Do NOT forward the user's words. Compose a complete, actionable prompt.
 
-1. **Gather context**: which repo, branch, files, what changed
-2. **Be specific**: include file paths, line numbers, relevant details
-3. **State the goal**: what the worker should produce
+Bad:
+```
+b0 delegate reviewer "review this PR"
+```
+
+Good:
+```
+b0 delegate reviewer "Review the changes on branch feature-timeout in this repo.
+The PR adds timeout handling to src/handler.rs.
+Focus on correctness, edge cases, and error handling.
+Cite line numbers for any issues found."
+```
+
+Steps:
+1. **Gather context first** — read relevant files, run `git diff`, check the branch
+2. **Include specifics** — file paths, line numbers, branch names, what changed and why
+3. **State the deliverable** — what the worker should produce (a list of issues, a summary, a fix)
+
+For large content (diffs, file contents), pipe via stdin:
+```
+git diff main..HEAD | b0 delegate reviewer "Review the following diff. Focus on correctness."
+```
 
 ## Concurrent tasks
 
-You can delegate to multiple workers in parallel:
+Delegate to multiple workers, then collect all results:
 
 ```bash
 b0 delegate reviewer "Review the changes on branch feature-timeout..."
-b0 delegate security "Check src/handler.rs for security vulnerabilities..."
+b0 delegate security "Check src/handler.rs for OWASP top 10 vulnerabilities..."
+b0 delegate doc-writer "Update README to reflect the new timeout config option..."
 b0 wait
 ```
+
+All three run in parallel. `b0 wait` blocks until all complete.
+
+## Handling worker questions
+
+During `b0 wait`, a worker may ask a question:
+
+```
+reviewer asks (thread thread-abc): "Is the timeout change on line 42 intentional?"
+  → Use: b0 reply thread-abc "<your answer>"
+```
+
+Answer with `b0 reply`, then run `b0 wait` again to continue collecting results.
+
+## Proactive status checks
+
+Before responding to a new user message, run `b0 status` to check if any previously delegated tasks have completed. Report results to the user if any are ready.
+
+## Error handling
+
+If a worker fails, `b0 wait` reports it. Decide whether to:
+- Retry with a clearer prompt
+- Try a different worker
+- Handle the task yourself
+- Report the failure to the user
 
 ## Multi-turn conversations
 
@@ -244,7 +282,7 @@ b0 delegate --thread <thread-id> <worker> "<follow-up>"
 b0 wait
 ```
 
-The worker remembers all previous turns in the conversation.
+The worker remembers all previous turns.
 "#,
             server_url = server_url
         )
