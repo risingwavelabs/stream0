@@ -40,12 +40,20 @@ Terminal 2 — login:
 ```bash
 # Login with the admin key printed above
 bh login http://localhost:8080 --key <admin-key>
-# Expected: "Connected", "Claude Code skill installed.", "Login complete."
+# Expected: "Connected", "Login complete."
+# Expected: "To install agent skill: bh skill install claude-code  (or: codex)"
 
-# Verify skill installed
+# Install skill (separate step)
+bh skill install claude-code
+# Expected: "Skill installed for Claude Code (~/.claude/skills/bh/SKILL.md)"
+
 ls ~/.claude/skills/bh/SKILL.md
 cat ~/.claude/skills/bh/SKILL.md | head -5
 # Expected: YAML frontmatter with name: bh
+
+# Or for Codex:
+bh skill install codex
+# Expected: "Skill installed for Codex (~/.codex/AGENTS.md)"
 
 # Verify config
 cat ~/.bh/config.toml

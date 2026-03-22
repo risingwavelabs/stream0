@@ -63,8 +63,12 @@ bh wait
 ### Connection
 
 ```
-bh login <server-url> --key <api-key>   Connect to server, install Claude Code skill
-bh logout                                Disconnect, remove skill
+bh login <server-url> --key <api-key>   Connect to server
+bh logout                                Disconnect
+bh skill install claude-code             Install skill for Claude Code
+bh skill install codex                   Install skill for Codex
+bh skill uninstall <agent>               Remove skill
+bh skill show                            Print skill content to stdout
 bh status                                Show connection, workers, pending tasks
 ```
 

@@ -150,7 +150,7 @@ Check out the branch and focus on correctness and edge cases."
 
 Workers are not limited to coding. A marketer worker gets a delegation prompt about campaign data. A researcher worker gets a prompt about a topic to investigate. The instructions (CLAUDE.md) define WHO they are; the delegation prompt defines WHAT to do this time.
 
-**The skill is the product.** The skill installed by `bh login` must teach Claude Code how to write good delegation prompts — gathering context, including relevant information, composing actionable instructions. This is the core of the lead-side user experience.
+**The skill is the product.** The skill installed by `bh skill install` must teach the agent how to write good delegation prompts — gathering context, including relevant information, composing actionable instructions. This is the core of the lead-side user experience.
 
 ## Lead implementation
 
@@ -208,21 +208,21 @@ Lead (Claude Code)
 
 ### How Claude Code knows about Boxhouse
 
-`bh login` installs a Claude Code **skill** (not CLAUDE.md modifications):
+`bh login` stores connection info. Skill installation is a separate step:
 
 ```bash
-bh login http://server:8080
+bh login http://server:8080 --key <api-key>
 # → stores connection info in ~/.bh/config
-# → installs skill to ~/.claude/skills/bh/SKILL.md
-# → (Option B only) installs boxhouse-channel MCP config
+
+bh skill install claude-code   # → ~/.claude/skills/bh/SKILL.md
+bh skill install codex         # → ~/.codex/AGENTS.md
 
 bh logout
 # → clears connection info
-# → uninstalls skill
-# → (Option B only) removes channel config
+# → uninstalls all skills
 ```
 
-The skill teaches Claude Code when and how to use `bh` CLI commands. It triggers proactively when the user's request matches delegation patterns (e.g., "review this PR", "check for security issues").
+The skill teaches the agent when and how to use `bh` CLI commands. It triggers proactively when the user's request matches delegation patterns (e.g., "review this PR", "check for security issues"). `bh skill show` prints the content for manual integration with other agents.
 
 If a machine already has `bh node join` configured (for running workers), `bh login` is not needed again — the connection info is already stored.
 
@@ -290,7 +290,7 @@ Claude Code:
 ### Connection
 
 ```bash
-bh login http://server:8080      # one-time, stores config + installs skill
+bh login http://server:8080 --key <key>  # stores connection info
 bh logout                        # clear credentials + uninstall skill
 bh status                        # which server, connection health
 ```
@@ -413,9 +413,9 @@ Server currently does not validate the `from` field on messages. Worker A can se
 | `bh node join` | Register a machine as a worker node |
 | `bh worker add/remove/ls/temp` | Remote worker lifecycle management |
 | `bh delegate` + `bh wait` | Non-blocking task delegation + result collection |
-| `bh login` | One-time connection setup + skill installation |
+| `bh login` | Connection setup (URL + key) |
 | `bh group` | Group and key management |
-| Claude Code skill | Installed by login, teaches Claude Code how to delegate |
+| Agent skill | `bh skill install <agent>`, teaches agent how to delegate |
 | Worker instructions | Per-worker specialization definition |
 | Role templates | Preset common worker roles |
 
