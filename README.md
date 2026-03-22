@@ -187,6 +187,18 @@ b0 wait
 
 The task is routed to Machine B. Claude CLI runs there, using Machine B's credentials and compute. Only the node owner can deploy workers to their machine.
 
+## Web dashboard
+
+Box0 includes a built-in web dashboard. Open your browser to the server URL (e.g., `http://localhost:8080`) and log in with your API key.
+
+The dashboard lets you:
+- **Workers**: list, add, remove, start/stop, view instructions and logs
+- **Tasks**: view pending tasks, browse thread history and message details
+- **Nodes**: see all nodes, their status, and which workers run on each
+- **Team**: manage groups, invite users, add members (admin)
+
+No separate install. The dashboard is served directly by the Box0 server.
+
 ## CLI reference
 
 ```

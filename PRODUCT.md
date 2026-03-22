@@ -417,6 +417,7 @@ Server currently does not validate the `from` field on messages. Worker A can se
 | Agent skill | `b0 skill install <agent>`, teaches agent how to delegate |
 | Worker instructions | Per-worker specialization definition |
 | Role templates | Preset common worker roles |
+| Web dashboard | Single-file HTML UI served by the server. Manage workers, tasks, nodes, team from a browser. No separate install. |
 
 ## Not now, maybe later
 
