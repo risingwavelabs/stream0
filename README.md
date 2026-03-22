@@ -71,32 +71,26 @@ For other agents, run `b0 skill show` to print the skill content. Paste it into 
 
 ### 4. Use it
 
-Open Claude Code (or Codex) and talk normally:
+Open Claude Code (or Codex) and say something like:
 
-```
-You: ask ux-expert, architect, and pragmatist whether Claude Code or Codex
-     is better for professional software development. then give me your
-     own conclusion based on their arguments.
-```
+> ask ux-expert, architect, and pragmatist whether Claude Code or Codex is better for professional software development. then give me your own conclusion based on their arguments.
 
 Claude Code automatically calls `b0 delegate` for each worker, runs `b0 wait` to collect the results, and synthesizes a conclusion. Three agents, three perspectives, one answer.
 
 ## Adding team members
 
+On the server machine (admin):
+
 ```bash
-# Admin invites alice (creates user + personal group "alice")
 b0 invite alice
-#   User "alice" created (ID: u-xxxx)
-#   Key: b0_def456...
-
-# Create a shared group and add alice to it
 b0 group create dev-team
-b0 group add-member dev-team u-xxxx
+b0 group add-member dev-team <alice-user-id>
+```
 
-# Alice logs in from her laptop
-b0 login http://server:8080 --key b0_def456...
+On Alice's laptop:
 
-# Alice can work in the shared group
+```bash
+b0 login http://server:8080 --key <alice-key>
 b0 worker add --group dev-team reviewer --instructions "Code reviewer."
 b0 delegate --group dev-team reviewer "Review src/main.rs"
 b0 wait
