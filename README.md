@@ -1,8 +1,6 @@
 # Box0
 
-Box0 is a multi-agent orchestration server. You define AI agents with specialized instructions, deploy them on one or more machines, and delegate tasks to them. Tasks run in parallel. Results come back to your CLI or to your lead agent (Claude Code, Codex, etc).
-
-Think of it as a task router for LLM processes. You send a task to an agent by name, Box0 routes it to the right machine, spins up a Claude CLI subprocess with the agent's instructions, and delivers the result back.
+Box0 is a multi-agent platform. Define AI agents with different specializations, deploy them across your machines, and let them work in parallel. Claude Code, Codex, or any CLI agent can delegate tasks to them.
 
 ```
 You: get three different perspectives on whether Claude Code or Codex
@@ -59,8 +57,8 @@ b0 server
 
 ```bash
 b0 login http://localhost:8080 --key b0_abc123...
-b0 group create my-team
-b0 group invite my-team --description "me"
+b0 group create my-group
+b0 group invite my-group --description "me"
 #   Key: b0_def456...
 b0 login http://localhost:8080 --key b0_def456...
 ```
