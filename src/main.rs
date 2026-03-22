@@ -203,10 +203,11 @@ async fn main() {
             if let Some(p) = port { cfg.port = p; }
             if let Some(d) = db { cfg.db_path = d; }
 
+            let default_level = if cfg.log_level == "info" { "warn" } else { &cfg.log_level };
             tracing_subscriber::fmt()
                 .with_env_filter(
                     tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&cfg.log_level)),
+                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_level)),
                 )
                 .init();
 
@@ -472,9 +473,13 @@ fn cmd_logout() {
 }
 
 fn cmd_reset() {
+    let b0_dir = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".b0");
     for name in ["b0.db", "b0.db-wal", "b0.db-shm"] {
-        if std::path::Path::new(name).exists() {
-            let _ = std::fs::remove_file(name);
+        let path = b0_dir.join(name);
+        if path.exists() {
+            let _ = std::fs::remove_file(&path);
         }
     }
     let _ = config::CliConfig::uninstall_skill_claude_code();

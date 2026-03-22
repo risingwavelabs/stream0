@@ -23,7 +23,12 @@ fn default_port() -> u16 {
     8080
 }
 fn default_db_path() -> String {
-    "./b0.db".to_string()
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".b0")
+        .join("b0.db")
+        .to_string_lossy()
+        .to_string()
 }
 fn default_log_level() -> String {
     "info".to_string()

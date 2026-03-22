@@ -36,7 +36,7 @@ Box0 is a multi-agent platform. It lets you run multiple AI agents in parallel a
 
 ## Worker execution
 
-- Each worker has its own isolated directory under `workers/<name>/`.
+- Each worker has its own isolated directory under `~/.b0/workers/<name>/`.
 - Workers support multiple runtimes: `auto` (default), `claude`, or `codex`.
   - `auto` prefers Claude Code if installed, falls back to Codex.
   - Set per-worker via `--runtime claude` or `--runtime codex`.

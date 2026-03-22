@@ -585,46 +585,157 @@ pub fn build_router(state: SharedState) -> Router {
         .with_state(state)
 }
 
+// --- Banner ---
+
+const LOGO: &str = r#"
+    ____   ____  _  _  ___
+   | __ ) / __ \\ \/ // _ \
+   |  _ \| |  | |\  /| | | |
+   | |_) | |__| |/  \| |_| |
+   |____/ \____//_/\_\\___/"#;
+
+const BOX_WIDTH: usize = 62;
+
+fn banner_line(text: &str) -> String {
+    let len = text.len();
+    let padding = if len < BOX_WIDTH - 2 {
+        BOX_WIDTH - 2 - len
+    } else {
+        0
+    };
+    format!("│{}{}│", text, " ".repeat(padding))
+}
+
+fn banner_empty() -> String {
+    banner_line(&" ".repeat(BOX_WIDTH - 2))
+}
+
+fn banner_top() -> String {
+    format!("╭{}╮", "─".repeat(BOX_WIDTH - 2))
+}
+
+fn banner_bottom() -> String {
+    format!("╰{}╯", "─".repeat(BOX_WIDTH - 2))
+}
+
+fn banner_separator() -> String {
+    format!("├{}┤", "─".repeat(BOX_WIDTH - 2))
+}
+
+fn print_banner(
+    server_url: &str,
+    db_path: &str,
+    workers_path: &str,
+    first_start: Option<(&str, &str, &str)>, // (key, user_name, user_id)
+) {
+    let version = env!("CARGO_PKG_VERSION");
+    let mut lines = Vec::new();
+
+    lines.push(banner_top());
+    // Logo
+    for logo_line in LOGO.lines() {
+        if logo_line.is_empty() { continue; }
+        lines.push(banner_line(logo_line));
+    }
+    lines.push(banner_empty());
+    lines.push(banner_line(&format!(
+        "   v{:<28}{}",
+        version, server_url
+    )));
+    lines.push(banner_empty());
+
+    // First start section
+    if let Some((key, user_name, user_id)) = first_start {
+        lines.push(banner_separator());
+        lines.push(banner_empty());
+        lines.push(banner_line("   First start detected."));
+        lines.push(banner_empty());
+        lines.push(banner_line(&format!("   Admin key:  {}", key)));
+        lines.push(banner_line(&format!("   User:       {} ({})", user_name, user_id)));
+        lines.push(banner_empty());
+        lines.push(banner_line("   CLI auto-configured. No login needed on this machine."));
+        lines.push(banner_line("   Next step:  b0 worker add <name> --instructions \"...\""));
+        lines.push(banner_empty());
+    }
+
+    // Info section
+    lines.push(banner_separator());
+    lines.push(banner_empty());
+    lines.push(banner_line(&format!("   Database:   {}", db_path)));
+    lines.push(banner_line(&format!("   Workers:    {}", workers_path)));
+    lines.push(banner_line(&format!("   Dashboard:  {}", server_url)));
+    lines.push(banner_empty());
+    lines.push(banner_line("   Press Ctrl+C to stop."));
+    lines.push(banner_empty());
+    lines.push(banner_bottom());
+
+    println!();
+    for line in &lines {
+        println!("{}", line);
+    }
+    println!();
+}
+
 // --- Server ---
 
 pub async fn run(config: ServerConfig) {
+    // Ensure DB parent directory exists
+    if let Some(parent) = std::path::Path::new(&config.db_path).parent() {
+        std::fs::create_dir_all(parent).expect("failed to create database directory");
+    }
+
     let db = Database::new(&config.db_path).expect("failed to initialize database");
 
-    // Bootstrap admin user on first start + auto-configure local CLI
-    match db.bootstrap_admin() {
-        Ok(Some((user, key))) => {
-            tracing::info!("Admin user created (first start)");
-            println!("\n  Admin key: {}", key);
-            println!("  User: {} ({})", user.name, user.id);
-
-            // Auto-write ~/.b0/config.toml so the server machine is ready to use
-            let mut cli_cfg = crate::config::CliConfig::load();
-            cli_cfg.server_url = format!("http://127.0.0.1:{}", config.port);
-            cli_cfg.api_key = Some(key.clone());
-            cli_cfg.default_group = Some(user.name.clone());
-            let _ = cli_cfg.lead_id(); // generate lead_id
-            if let Err(e) = cli_cfg.save() {
-                tracing::warn!("Failed to auto-configure CLI: {}", e);
-            } else {
-                println!("  CLI configured. No login needed on this machine.\n");
-            }
-        }
-        Ok(None) => {}
-        Err(e) => tracing::error!("Failed to bootstrap admin: {}", e),
-    }
-
-    // Auto-register "local" node owned by admin
-    if let Ok(Some(admin_id)) = db.get_admin_user_id() {
-        let _ = db.register_node("local", &admin_id);
-    }
-
-    let state = Arc::new(AppState { db });
+    let server_url = format!("http://{}:{}", config.host, config.port);
 
     // Derive workspace root from DB path
     let workspace_root = std::path::Path::new(&config.db_path)
         .parent()
         .unwrap_or(std::path::Path::new("."))
         .join("workers");
+    let workers_display = format!("{}/", workspace_root.display());
+
+    // Shorten paths for display: replace home dir with ~
+    let db_display = match dirs::home_dir() {
+        Some(home) => config.db_path.replace(&home.to_string_lossy().to_string(), "~"),
+        None => config.db_path.clone(),
+    };
+    let workers_display = match dirs::home_dir() {
+        Some(home) => workers_display.replace(&home.to_string_lossy().to_string(), "~"),
+        None => workers_display,
+    };
+
+    // Bootstrap admin user on first start + auto-configure local CLI
+    let first_start_info = match db.bootstrap_admin() {
+        Ok(Some((user, key))) => {
+            let mut cli_cfg = crate::config::CliConfig::load();
+            cli_cfg.server_url = format!("http://127.0.0.1:{}", config.port);
+            cli_cfg.api_key = Some(key.clone());
+            cli_cfg.default_group = Some(user.name.clone());
+            let _ = cli_cfg.lead_id();
+            if let Err(e) = cli_cfg.save() {
+                tracing::warn!("Failed to auto-configure CLI: {}", e);
+            }
+            Some((key, user.name.clone(), user.id.clone()))
+        }
+        Ok(None) => None,
+        Err(e) => { tracing::error!("Failed to bootstrap admin: {}", e); None }
+    };
+
+    // Auto-register "local" node owned by admin
+    if let Ok(Some(admin_id)) = db.get_admin_user_id() {
+        let _ = db.register_node("local", &admin_id);
+    }
+
+    // Print banner
+    print_banner(
+        &server_url,
+        &db_display,
+        &workers_display,
+        first_start_info.as_ref().map(|(k, n, i)| (k.as_str(), n.as_str(), i.as_str())),
+    );
+
+    let state = Arc::new(AppState { db });
 
     // Spawn daemon for "local" node
     let daemon_state = state.clone();
@@ -636,18 +747,24 @@ pub async fn run(config: ServerConfig) {
 
 
     let addr = config.address();
-    tracing::info!(address = %addr, "Box0 server starting");
 
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .expect("failed to bind");
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("Error: cannot bind to {}. {}", addr, e);
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                let port = addr.split(':').last().unwrap_or("8080");
+                eprintln!("Hint: kill the existing process: kill $(lsof -ti :{})", port);
+                eprintln!("  or use a different port:       b0 server --port <other>", );
+            }
+            std::process::exit(1);
+        }
+    };
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("server error");
-
-    tracing::info!("Box0 server stopped");
 }
 
 async fn shutdown_signal() {
