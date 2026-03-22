@@ -95,6 +95,36 @@ ls workers/
 
 ---
 
+## Test 3b: Runtime selection
+
+```bash
+b0 worker add w-claude --instructions "Answer in one word." --runtime claude
+b0 worker add w-codex --instructions "Answer in one word." --runtime codex
+b0 worker add w-auto --instructions "Answer in one word." --runtime auto
+```
+
+```bash
+b0 delegate w-claude "Capital of France?"
+b0 delegate w-codex "Capital of Germany?"
+b0 delegate w-auto "Capital of Italy?"
+b0 wait
+```
+
+Expected:
+- w-claude: Paris (runtime: claude in daemon log)
+- w-codex: Berlin (runtime: codex in daemon log)
+- w-auto: Rome (runtime: auto resolves to claude if installed, otherwise codex)
+
+If codex is not installed, w-codex should fail with "codex CLI not found".
+
+```bash
+b0 worker remove w-claude
+b0 worker remove w-codex
+b0 worker remove w-auto
+```
+
+---
+
 ## Test 4: Invite user + shared group
 
 On the server machine (admin):

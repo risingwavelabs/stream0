@@ -40,10 +40,11 @@ Box0 is a multi-agent platform. It lets you run multiple AI agents in parallel a
   - `auto` prefers Claude Code if installed, falls back to Codex.
   - Set per-worker via `--runtime claude` or `--runtime codex`.
 - Daemon spawns the runtime CLI in the worker's directory.
-  - Claude: `claude --print --output-format json --system-prompt "<instructions>"`
-  - Codex: `codex exec --json --full-auto "<instructions>\n\n<task>"`
-- Task content is piped via stdin (Claude) or passed as argument (Codex).
-- Session IDs are tracked per thread for multi-turn conversations (`--resume`, Claude only).
+  - Claude: `claude --print --output-format json --system-prompt "<instructions>"`, task piped via stdin.
+  - Codex: `codex exec --json --full-auto --skip-git-repo-check [-C <dir>] "<instructions>\n\n<task>"`, task as argument.
+  - Codex output is JSONL. Parse `item.completed` events, extract `item.text`.
+  - Codex requires `--skip-git-repo-check` because worker directories are not git repos.
+- Session IDs are tracked per thread for multi-turn conversations (`--resume`, Claude only). Codex does not support session resume.
 - Multi-turn: `b0 delegate --thread <id>` sends "answer" message, daemon resumes Claude session.
 - Windows compatibility: runtime detection uses `where` instead of `which`.
 
