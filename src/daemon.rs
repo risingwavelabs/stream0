@@ -102,6 +102,16 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                         "Processing task"
                     );
 
+                    // Notify lead agent that we started processing
+                    let _ = state.db.send_inbox_message(
+                        &tenant,
+                        &msg.thread_id,
+                        &msg.to_agent,
+                        &msg.from_agent,
+                        "started",
+                        None,
+                    );
+
                     let result =
                         invoke_runtime(&worker_runtime, &instructions, &task_content, resume_session.as_deref(), Some(&worker_dir))
                             .await;
@@ -260,6 +270,18 @@ pub async fn run_remote(server_url: &str, node_id: &str, api_key: Option<&str>) 
                         dir = %worker_dir.display(),
                         "Processing task"
                     );
+
+                    // Notify lead agent that we started processing
+                    let _ = client
+                        .send_message(
+                            &group,
+                            &msg.from_agent,
+                            &msg.thread_id,
+                            &msg.to_agent,
+                            "started",
+                            None,
+                        )
+                        .await;
 
                     let result =
                         invoke_runtime(&worker_runtime, &instructions, &task_content, resume_session.as_deref(), Some(&worker_dir))

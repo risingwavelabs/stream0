@@ -612,19 +612,31 @@ async fn cmd_wait() {
         return;
     }
 
-    println!("Waiting for {} task(s)...", pending.threads.len());
+    let total = pending.threads.len();
+    println!("Waiting for {} task(s)...\n", total);
+
+    // Track per-worker status: "queued" or "running"
+    let mut status: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
+    for info in pending.threads.values() {
+        status.insert(info.worker.clone(), "queued");
+    }
+
+    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    let mut status_lines_printed: usize = 0;
+
+    // Print initial status
+    print_status(&status, &pending, is_tty, &mut status_lines_printed);
 
     loop {
         if pending.threads.is_empty() {
-            println!("All done.");
+            println!("\nAll {} task(s) done.", total);
             break;
         }
 
-        // Poll each group's inbox
         let groups: Vec<String> = pending.threads.values().map(|t| t.group.clone()).collect::<std::collections::HashSet<_>>().into_iter().collect();
 
         for group in &groups {
-            let messages = match client.get_inbox(group, &lead_id, Some("unread"), Some(5.0)).await {
+            let messages = match client.get_inbox(group, &lead_id, Some("unread"), Some(2.0)).await {
                 Ok(m) => m,
                 Err(_) => continue,
             };
@@ -641,19 +653,43 @@ async fn cmd_wait() {
                     let thread_group = thread_info.group.clone();
 
                     match msg.msg_type.as_str() {
+                        "started" => {
+                            status.insert(worker_name.clone(), "running");
+                            // Clear and reprint status
+                            clear_status(is_tty, status_lines_printed);
+                            status_lines_printed = 0;
+                            print_status(&status, &pending, is_tty, &mut status_lines_printed);
+                        }
                         "done" => {
+                            status.remove(&worker_name);
+                            clear_status(is_tty, status_lines_printed);
+                            status_lines_printed = 0;
                             println!("{} done ({}): {}", worker_name, elapsed, content);
                             pending.threads.remove(&msg.thread_id);
                             if is_temp { let _ = client.remove_worker(&thread_group, &worker_name).await; }
+                            if !pending.threads.is_empty() {
+                                println!();
+                                print_status(&status, &pending, is_tty, &mut status_lines_printed);
+                            }
                         }
                         "failed" => {
+                            status.remove(&worker_name);
+                            clear_status(is_tty, status_lines_printed);
+                            status_lines_printed = 0;
                             eprintln!("{} failed ({}): {}", worker_name, elapsed, content);
                             pending.threads.remove(&msg.thread_id);
                             if is_temp { let _ = client.remove_worker(&thread_group, &worker_name).await; }
+                            if !pending.threads.is_empty() {
+                                println!();
+                                print_status(&status, &pending, is_tty, &mut status_lines_printed);
+                            }
                         }
                         "question" => {
+                            clear_status(is_tty, status_lines_printed);
+                            status_lines_printed = 0;
                             println!("\n{} asks (thread {}): {}\n  -> Use: b0 reply --group {} {} \"<your answer>\"",
                                 worker_name, msg.thread_id, content, thread_group, msg.thread_id);
+                            print_status(&status, &pending, is_tty, &mut status_lines_printed);
                         }
                         _ => {}
                     }
@@ -662,7 +698,47 @@ async fn cmd_wait() {
             }
         }
 
+        // Refresh elapsed times in status display
+        if !pending.threads.is_empty() && is_tty {
+            clear_status(is_tty, status_lines_printed);
+            status_lines_printed = 0;
+            print_status(&status, &pending, is_tty, &mut status_lines_printed);
+        }
+
         let _ = config::CliConfig::save_pending(&pending);
+    }
+}
+
+fn print_status(
+    status: &std::collections::HashMap<String, &str>,
+    pending: &config::PendingState,
+    _is_tty: bool,
+    lines_printed: &mut usize,
+) {
+    for info in pending.threads.values() {
+        let state = status.get(info.worker.as_str()).copied().unwrap_or("queued");
+        let elapsed = if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&info.created_at) {
+            let secs = (chrono::Utc::now() - created.with_timezone(&chrono::Utc)).num_seconds();
+            format!("{}s", secs)
+        } else {
+            "?s".to_string()
+        };
+        let indicator = match state {
+            "running" => "...",
+            _ => "   ",
+        };
+        eprintln!("  {:<16} {} ({}){}", info.worker, state, elapsed, indicator);
+        *lines_printed += 1;
+    }
+}
+
+fn clear_status(is_tty: bool, lines: usize) {
+    if !is_tty || lines == 0 {
+        return;
+    }
+    // Move cursor up and clear each line
+    for _ in 0..lines {
+        eprint!("\x1b[1A\x1b[2K");
     }
 }
 

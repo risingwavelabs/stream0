@@ -225,6 +225,47 @@ async fn test_inbox_roundtrip() {
 }
 
 #[tokio::test]
+async fn test_started_message_flow() {
+    let (url, key, _tmp) = start_test_server().await;
+    let client = admin_client(&url, &key);
+
+    // Register lead agent and worker agent
+    client.register_agent("admin", "lead").await.unwrap();
+    client.register_agent("admin", "worker-1").await.unwrap();
+
+    // Simulate: lead sends request to worker
+    client
+        .send_message("admin", "worker-1", "thread-1", "lead", "request", Some(&serde_json::json!("task")))
+        .await
+        .unwrap();
+
+    // Simulate: daemon sends "started" back to lead
+    client
+        .send_message("admin", "lead", "thread-1", "worker-1", "started", None)
+        .await
+        .unwrap();
+
+    // Lead sees the started message
+    let messages = client.get_inbox("admin", "lead", Some("unread"), None).await.unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].msg_type, "started");
+    assert_eq!(messages[0].from_agent, "worker-1");
+
+    // Ack it
+    client.ack_message("admin", &messages[0].id).await.unwrap();
+
+    // Simulate: daemon sends "done" back to lead
+    client
+        .send_message("admin", "lead", "thread-1", "worker-1", "done", Some(&serde_json::json!("result")))
+        .await
+        .unwrap();
+
+    let messages = client.get_inbox("admin", "lead", Some("unread"), None).await.unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].msg_type, "done");
+}
+
+#[tokio::test]
 async fn test_nodes() {
     let (url, key, _tmp) = start_test_server().await;
     let client = admin_client(&url, &key);

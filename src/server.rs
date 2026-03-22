@@ -194,7 +194,7 @@ async fn send_inbox_message_handler(
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
 
-    let valid_types = ["request", "question", "answer", "done", "failed", "message"];
+    let valid_types = ["request", "question", "answer", "done", "failed", "message", "started"];
     if !valid_types.contains(&req.msg_type.as_str()) {
         return error_response(StatusCode::BAD_REQUEST, "invalid message type");
     }
