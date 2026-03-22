@@ -9,15 +9,16 @@ Box0 is a multi-agent platform. It lets you run multiple AI agents in parallel a
 - Never use em dashes. Use periods, commas, colons, or "- " instead.
 - All content in English.
 - README code blocks must be copy-paste safe. No inline comments on the same line as commands. No blocking commands (like `b0 server`) in the same block as other commands. Use blockquotes for conversation examples, not code blocks.
-- Always test changes before committing. Run `cargo build` and `cargo test` at minimum. For user-facing features, run e2e tests covering single-machine and multi-machine scenarios.
-- After code changes, always update README.md, TESTING.md, CLAUDE.md, and the skill content in config.rs if affected. This is critical.
+- Always test changes before committing. Run `cargo test` at minimum (unit + integration tests). For user-facing features, run `tests/e2e.sh` which requires Claude Code or Codex.
+- After code changes, always update README.md, CLAUDE.md, docs/, and the skill content in config.rs if affected. This is critical.
 - Commit messages: imperative mood, concise first line, details in body.
 - No documentation files unless explicitly requested.
 
 ## Architecture
 
+- `src/lib.rs` - Library crate, re-exports all modules
 - `src/main.rs` - CLI entry point, all subcommand dispatch
-- `src/server.rs` - Axum HTTP server, route handlers, auth middleware
+- `src/server.rs` - Axum HTTP server, route handlers, auth middleware, `build_router()` for tests
 - `src/db.rs` - SQLite schema, models, all queries
 - `src/daemon.rs` - Node daemon (local + remote), polls worker inboxes, spawns runtime
 - `src/client.rs` - HTTP client for CLI-to-server communication
@@ -82,10 +83,7 @@ Tables: users, groups, group_members, agents, inbox_messages, nodes, workers. Gr
 ## Testing
 
 - Unit tests in `src/db.rs` (8 tests covering users, groups, workers, inbox, nodes, ownership).
-- E2e tests: start server, run CLI commands, verify results. Always clean up (delete DB, config).
-- Multi-machine tests require SSH access to remote machines with b0 and claude/codex installed.
+- API integration tests in `tests/api.rs` (10 tests). Start a real Axum server per test with temp DB, test via HTTP client. No Claude/Codex needed. Run with `cargo test`.
+- E2e script in `tests/e2e.sh`. Requires Claude Code or Codex installed. Starts real server, runs CLI commands, verifies results. Run manually before releases.
+- CI runs `cargo test` on every push/PR via `.github/workflows/ci.yml`.
 - `b0 reset` deletes DB, config, and skills for clean slate.
-- Test matrix:
-  - Single machine: server start, worker add, delegate, wait, multi-turn, temp, skill install
-  - Multi-machine: remote login (auto default_group), remote delegation, node join, worker on remote node
-  - Runtimes: claude, codex, auto-detection

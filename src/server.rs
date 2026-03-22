@@ -545,6 +545,46 @@ fn error_response(status: StatusCode, message: &str) -> axum::response::Response
     (status, Json(serde_json::json!({"error": message}))).into_response()
 }
 
+// --- Router ---
+
+/// Build the Axum router with all routes. Extracted for use in tests.
+pub fn build_router(state: SharedState) -> Router {
+    let public = Router::new().route("/health", get(health_handler));
+
+    let protected = Router::new()
+        .route("/groups", get(list_groups_handler).post(create_group_handler))
+        .route("/groups/{group_name}/members/{user_id}", post(add_to_group_handler))
+        .route("/groups/{group_name}/agents", post(register_agent_handler))
+        .route("/groups/{group_name}/agents/{agent_id}/inbox",
+            get(get_inbox_messages_handler).post(send_inbox_message_handler))
+        .route("/groups/{group_name}/inbox/{message_id}/ack", post(ack_inbox_message_handler))
+        .route("/groups/{group_name}/threads/{thread_id}", get(get_thread_messages_handler))
+        .route("/groups/{group_name}/workers",
+            get(list_workers_handler).post(register_worker_handler))
+        .route("/groups/{group_name}/workers/{name}",
+            get(get_worker_handler).delete(remove_worker_handler).put(update_worker_handler))
+        .route("/groups/{group_name}/workers/{name}/stop", post(stop_worker_handler))
+        .route("/groups/{group_name}/workers/{name}/start", post(start_worker_handler))
+        .route("/groups/{group_name}/workers/{name}/logs", get(worker_logs_handler))
+        .route("/nodes", get(list_nodes_handler).post(register_node_handler))
+        .route("/nodes/{node_id}/heartbeat", post(heartbeat_node_handler))
+        .route("/nodes/{node_id}/workers", get(node_workers_handler))
+        .route("/users", get(list_users_handler))
+        .route("/users/invite", post(invite_user_handler))
+        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
+
+    let web_dir = std::path::Path::new("web");
+    let serve_dir = ServeDir::new(web_dir)
+        .fallback(tower_http::services::ServeFile::new(web_dir.join("index.html")));
+
+    Router::new()
+        .merge(public)
+        .merge(protected)
+        .fallback_service(serve_dir)
+        .layer(CorsLayer::permissive())
+        .with_state(state)
+}
+
 // --- Server ---
 
 pub async fn run(config: ServerConfig) {
@@ -592,49 +632,8 @@ pub async fn run(config: ServerConfig) {
         daemon::run_local(daemon_state, workspace_root).await;
     });
 
-    // Public routes
-    let public = Router::new().route("/health", get(health_handler));
+    let app = build_router(state);
 
-    // Protected routes - group-scoped endpoints use /groups/{group}/...
-    let protected = Router::new()
-        // Groups
-        .route("/groups", get(list_groups_handler).post(create_group_handler))
-        .route("/groups/{group_name}/members/{user_id}", post(add_to_group_handler))
-        // Agents (within a group)
-        .route("/groups/{group_name}/agents", post(register_agent_handler))
-        .route("/groups/{group_name}/agents/{agent_id}/inbox",
-            get(get_inbox_messages_handler).post(send_inbox_message_handler))
-        .route("/groups/{group_name}/inbox/{message_id}/ack", post(ack_inbox_message_handler))
-        .route("/groups/{group_name}/threads/{thread_id}", get(get_thread_messages_handler))
-        // Workers (within a group)
-        .route("/groups/{group_name}/workers",
-            get(list_workers_handler).post(register_worker_handler))
-        .route("/groups/{group_name}/workers/{name}",
-            get(get_worker_handler).delete(remove_worker_handler).put(update_worker_handler))
-        .route("/groups/{group_name}/workers/{name}/stop", post(stop_worker_handler))
-        .route("/groups/{group_name}/workers/{name}/start", post(start_worker_handler))
-        .route("/groups/{group_name}/workers/{name}/logs", get(worker_logs_handler))
-        // Nodes (global)
-        .route("/nodes", get(list_nodes_handler).post(register_node_handler))
-        .route("/nodes/{node_id}/heartbeat", post(heartbeat_node_handler))
-        .route("/nodes/{node_id}/workers", get(node_workers_handler))
-        // Users (admin)
-        .route("/users", get(list_users_handler))
-        .route("/users/invite", post(invite_user_handler))
-        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
-
-    // Serve the web dashboard from the web/ directory.
-    // Falls back to index.html for SPA hash-routing support.
-    let web_dir = std::path::Path::new("web");
-    let serve_dir = ServeDir::new(web_dir)
-        .fallback(tower_http::services::ServeFile::new(web_dir.join("index.html")));
-
-    let app = Router::new()
-        .merge(public)
-        .merge(protected)
-        .fallback_service(serve_dir)
-        .layer(CorsLayer::permissive())
-        .with_state(state);
 
     let addr = config.address();
     tracing::info!(address = %addr, "Box0 server starting");

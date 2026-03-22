@@ -1,9 +1,4 @@
-mod client;
-mod config;
-mod daemon;
-mod db;
-mod server;
-
+use box0::{client, config, daemon, server};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
