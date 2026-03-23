@@ -1,0 +1,28 @@
+import fp from 'fastify-plugin'
+import swagger from '@fastify/swagger'
+import swaggerUi from '@fastify/swagger-ui'
+import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox'
+import { APP_NAME, APP_VERSION } from '../config/meta'
+
+const docsPlugin: FastifyPluginAsyncTypebox = async (app) => {
+  if (!app.env.ENABLE_SWAGGER) {
+    return
+  }
+
+  await app.register(swagger, {
+    openapi: {
+      info: {
+        title: `${APP_NAME} API`,
+        version: APP_VERSION
+      }
+    }
+  })
+
+  await app.register(swaggerUi, {
+    routePrefix: '/docs'
+  })
+}
+
+export default fp(docsPlugin, {
+  name: 'docs'
+})
