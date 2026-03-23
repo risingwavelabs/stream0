@@ -639,27 +639,27 @@ async fn create_task_handler(
     }
 
     let thread_id = format!("thread-{}", &uuid::Uuid::new_v4().to_string()[..8]);
-    let agent_name = "lead";
-
-    // Verify lead agent exists
-    match state.db.get_agent(&workspace_name, agent_name) {
-        Ok(Some(_)) => {}
-        Ok(None) => return error_response(StatusCode::NOT_FOUND, "lead agent not found in this workspace. Start the server to bootstrap it."),
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    }
-
     let from_id = format!("web-{}", caller.user.id);
 
+    // Auto-create a temp agent for this task
+    let agent_name = format!("task-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+    let default_instructions = "You are a helpful assistant. Complete the task. Be concise.";
+    if let Err(e) = state.db.register_agent(
+        &workspace_name, &agent_name, "", default_instructions, "local", "auto", &caller.user.id, true,
+    ) {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+    }
+
     let task = match state.db.create_task(
-        &workspace_name, &req.title, agent_name, &thread_id, req.parent_task_id.as_deref(), &caller.user.id,
+        &workspace_name, &req.title, &agent_name, &thread_id, req.parent_task_id.as_deref(), &caller.user.id,
     ) {
         Ok(t) => t,
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
 
-    // Send inbox message to lead agent
+    // Send inbox message to task agent
     if let Err(e) = state.db.send_inbox_message(
-        &workspace_name, &thread_id, &from_id, agent_name, "request", Some(&serde_json::json!(req.title)),
+        &workspace_name, &thread_id, &from_id, &agent_name, "request", Some(&serde_json::json!(req.title)),
     ) {
         return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
     }
@@ -958,18 +958,6 @@ pub async fn run(config: ServerConfig) {
     if let Ok(Some(admin_id)) = db.get_admin_user_id() {
         let _ = db.register_machine("local", &admin_id);
 
-        // Bootstrap lead agent in admin's workspace
-        let lead_instructions = crate::config::lead_agent_instructions(&server_url);
-        if let Some((_, ref admin_name, _)) = first_start_info {
-            let _ = db.bootstrap_lead_agent(admin_name, &admin_id, &lead_instructions);
-        } else {
-            // Not first start, but ensure lead agent exists in all workspaces the admin owns
-            if let Ok(workspaces) = db.list_workspaces_for_user(&admin_id) {
-                for ws in &workspaces {
-                    let _ = db.bootstrap_lead_agent(&ws.name, &admin_id, &lead_instructions);
-                }
-            }
-        }
     }
 
     // Resolve API key for dashboard URL: from first start or CLI config

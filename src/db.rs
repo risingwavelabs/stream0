@@ -975,21 +975,6 @@ impl Database {
         .map_err(Into::into)
     }
 
-    /// Bootstrap lead agent in a workspace. No-op if already exists.
-    pub fn bootstrap_lead_agent(
-        &self,
-        workspace_name: &str,
-        admin_user_id: &str,
-        instructions: &str,
-    ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT OR IGNORE INTO agents (workspace_name, name, description, instructions, machine_id, runtime, registered_by, temp, timeout) VALUES (?1, 'lead', 'Lead orchestrator agent', ?2, 'local', 'auto', ?3, 0, 1800)",
-            params![workspace_name, instructions, admin_user_id],
-        )?;
-        Ok(())
-    }
-
     // --- Cron Jobs ---
 
     pub fn create_cron_job(
@@ -1269,7 +1254,7 @@ mod tests {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
 
-        let task = db.create_task("alice", "Review PR #42", "lead", "thread-abc", None, &alice.id).unwrap();
+        let task = db.create_task("alice", "Review PR #42", "task-abc", "thread-abc", None, &alice.id).unwrap();
         assert!(task.id.starts_with("task-"));
         assert_eq!(task.status, "running");
         assert_eq!(task.title, "Review PR #42");
@@ -1292,7 +1277,7 @@ mod tests {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
 
-        let parent = db.create_task("alice", "SEO project", "lead", "thread-1", None, &alice.id).unwrap();
+        let parent = db.create_task("alice", "SEO project", "task-seo", "thread-1", None, &alice.id).unwrap();
         let _sub1 = db.create_task("alice", "Research keywords", "worker-1", "thread-2", Some(&parent.id), &alice.id).unwrap();
         let _sub2 = db.create_task("alice", "Write blog", "worker-2", "thread-3", Some(&parent.id), &alice.id).unwrap();
 
@@ -1305,29 +1290,12 @@ mod tests {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
 
-        let task = db.create_task("alice", "Test task", "lead", "thread-xyz", None, &alice.id).unwrap();
+        let task = db.create_task("alice", "Test task", "task-xyz", "thread-xyz", None, &alice.id).unwrap();
         let found = db.get_task_by_thread("alice", "thread-xyz").unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, task.id);
 
         let not_found = db.get_task_by_thread("alice", "thread-nope").unwrap();
         assert!(not_found.is_none());
-    }
-
-    #[test]
-    fn test_bootstrap_lead_agent() {
-        let db = test_db();
-        let (alice, _) = db.create_user("alice", false).unwrap();
-
-        db.bootstrap_lead_agent("alice", &alice.id, "You are the lead.").unwrap();
-        let agent = db.get_agent("alice", "lead").unwrap();
-        assert!(agent.is_some());
-        let agent = agent.unwrap();
-        assert_eq!(agent.timeout, 1800);
-
-        // Second call is no-op
-        db.bootstrap_lead_agent("alice", &alice.id, "Updated instructions").unwrap();
-        let agent = db.get_agent("alice", "lead").unwrap().unwrap();
-        assert_eq!(agent.instructions, "You are the lead."); // unchanged
     }
 }

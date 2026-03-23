@@ -55,14 +55,6 @@ enum Command {
         #[command(subcommand)]
         command: CronCommand,
     },
-    /// Run a task (delegates to lead agent)
-    Run {
-        /// Workspace name
-        #[arg(long)]
-        workspace: Option<String>,
-        /// Task description
-        task: String,
-    },
     /// Delegate a task to an agent
     Delegate {
         /// Workspace name
@@ -574,23 +566,6 @@ async fn main() {
             }
         },
 
-        Command::Run { workspace, task } => { let workspace = resolve_workspace(workspace);
-            let task_content = if !std::io::stdin().is_terminal() {
-                use std::io::Read;
-                let mut buf = String::new();
-                std::io::stdin().read_to_string(&mut buf).expect("failed to read stdin");
-                if !buf.trim().is_empty() {
-                    format!("{}\n\n{}", task, buf)
-                } else {
-                    task
-                }
-            } else {
-                task
-            };
-            let task_content = expand_file_refs(&task_content);
-            cmd_run(&workspace, &task_content).await;
-        }
-
         Command::Delegate { workspace, thread, agent, task } => { let workspace = resolve_workspace(workspace);
             let task_content = match task {
                 Some(t) => {
@@ -764,12 +739,6 @@ async fn cmd_agent_temp(workspace: &str, task: &str, instructions: &str) {
             eprintln!("Error: {}", e); std::process::exit(1);
         }
     }
-}
-
-async fn cmd_run(workspace: &str, task: &str) {
-    // b0 run is equivalent to: b0 delegate lead "<task>"
-    // Uses lead_id as from so b0 wait can poll the results
-    cmd_delegate(workspace, "lead", task, None).await;
 }
 
 async fn cmd_delegate(workspace: &str, agent: &str, task: &str, continue_thread: Option<&str>) {

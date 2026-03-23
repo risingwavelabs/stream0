@@ -80,12 +80,11 @@ Box0 is a multi-agent platform. It lets you run multiple AI agents in parallel a
 
 - Users interact with Box0 via Tasks. Agents are invisible infrastructure.
 - Each task has: title, status (running/needs_input/done/failed), conversation thread, optional sub-tasks, result.
-- Web UI: left panel = chat with lead agent, right panel = task board grouped by status.
-- Lead agent: a regular worker agent with orchestrator instructions + b0 skill. Auto-created on server startup.
-- Two paths: CLI (`b0 run`, `b0 delegate`) and Web UI (Task API). Both converge on the same inbox/daemon layer.
-- `b0 run "<task>"` creates a task and delegates to the lead agent.
+- Web UI: left panel = chat, right panel = task board grouped by status.
+- Creating a task via Web UI auto-creates a temp agent to handle it.
+- Two paths: CLI (`b0 delegate`) and Web UI (Task API). Both converge on the same inbox/daemon layer.
 - Task status auto-updates when inbox messages of type "done", "failed", or "question" arrive on the task's thread.
-- Agent timeout is configurable per-agent (default 300s, lead agent 1800s).
+- Agent timeout is configurable per-agent (default 300s).
 
 ## DB schema
 
@@ -93,7 +92,7 @@ Tables: users, workspaces, workspace_members, agents, inbox_messages, machines, 
 
 ## Testing
 
-- Unit tests in `src/db.rs` (12 tests covering users, workspaces, agents, inbox, machines, ownership, tasks).
+- Unit tests in `src/db.rs` (11 tests covering users, workspaces, agents, inbox, machines, ownership, tasks).
 - API integration tests in `tests/api.rs` (15 tests). Start a real Axum server per test with temp DB, test via HTTP client. No Claude/Codex needed. Run with `cargo test`.
 - E2e script in `tests/e2e.sh`. Requires Claude Code or Codex installed. Starts real server, runs CLI commands, verifies results. Run manually before releases.
 - CI runs `cargo test` on every push/PR via `.github/workflows/ci.yml`.

@@ -206,7 +206,6 @@ Run `b0 agent ls` to see available agents and their descriptions. Match agents t
 ## Commands
 
 ```bash
-b0 run "<task>"                                        # create task, delegate to lead agent
 b0 agent ls                                           # list available agents
 b0 delegate <agent> "<detailed task prompt>"          # send task (non-blocking)
 b0 delegate --thread <id> <agent> "<follow-up>"       # continue conversation
@@ -420,37 +419,6 @@ allowed-tools:
         }
         Ok(())
     }
-}
-
-// --- Lead Agent Instructions ---
-
-pub fn lead_agent_instructions(server_url: &str) -> String {
-    format!(
-r#"You are the lead orchestrator agent for Box0.
-
-Your role:
-- Receive tasks from users
-- Break complex tasks into sub-tasks and delegate to specialized worker agents
-- For simple tasks, handle them directly or delegate to a single worker
-- Coordinate results and synthesize a clear response
-
-You have access to the b0 CLI. Use it to manage work:
-
-{skill_content}
-
-When you receive a task:
-1. Analyze what needs to be done
-2. Check available agents with b0 agent ls
-3. If agents exist that match the task, delegate with b0 delegate
-4. If no suitable agent exists, use b0 agent temp for one-off work
-5. Wait for results with b0 wait
-6. Synthesize the results into a clear, actionable response
-
-For simple tasks that do not need delegation, just complete them directly.
-
-Be concise. Report results clearly. Do not explain your orchestration process to the user."#,
-        skill_content = CliConfig::skill_content(server_url)
-    )
 }
 
 // --- Pending State ---
