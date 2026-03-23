@@ -69,7 +69,11 @@ enum Command {
         task: Option<String>,
     },
     /// Wait for pending task results
-    Wait,
+    Wait {
+        /// Wait for all pending tasks (default: return on first completion)
+        #[arg(long)]
+        all: bool,
+    },
     /// Reply to an agent's question
     Reply {
         /// Workspace name
@@ -639,7 +643,7 @@ async fn main() {
             cmd_delegate(&workspace, &resolved_agent, &task_content, thread.as_deref()).await;
         }
 
-        Command::Wait => cmd_wait().await,
+        Command::Wait { all } => cmd_wait(all).await,
 
         Command::Reply { workspace, thread_id, message } => { let workspace = resolve_workspace(workspace);
             cmd_reply(&workspace, &thread_id, &message).await;
@@ -818,7 +822,7 @@ async fn cmd_delegate(workspace: &str, agent: &str, task: &str, continue_thread:
     }
 }
 
-async fn cmd_wait() {
+async fn cmd_wait(wait_all: bool) {
     let mut cfg = config::CliConfig::load();
     let lead_id = cfg.lead_id();
     let client = make_client(&cfg);
@@ -846,7 +850,7 @@ async fn cmd_wait() {
 
     loop {
         if pending.threads.is_empty() {
-            println!("\nAll {} task(s) done.", total);
+            if wait_all { println!("\nAll {} task(s) done.", total); }
             break;
         }
 
@@ -883,6 +887,11 @@ async fn cmd_wait() {
                             status_lines_printed = 0;
                             println!("{} done ({}): {}", agent_name, elapsed, content);
                             pending.threads.remove(&msg.thread_id);
+                            let _ = client.ack_message(workspace, &msg.id).await;
+                            if !wait_all {
+                                let _ = config::CliConfig::save_pending(&pending);
+                                return;
+                            }
                             if !pending.threads.is_empty() {
                                 println!();
                                 print_status(&status, &pending, is_tty, &mut status_lines_printed);
@@ -894,6 +903,11 @@ async fn cmd_wait() {
                             status_lines_printed = 0;
                             eprintln!("{} failed ({}): {}", agent_name, elapsed, content);
                             pending.threads.remove(&msg.thread_id);
+                            let _ = client.ack_message(workspace, &msg.id).await;
+                            if !wait_all {
+                                let _ = config::CliConfig::save_pending(&pending);
+                                return;
+                            }
                             if !pending.threads.is_empty() {
                                 println!();
                                 print_status(&status, &pending, is_tty, &mut status_lines_printed);

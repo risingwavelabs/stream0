@@ -209,7 +209,8 @@ Run `b0 agent ls` to see available agents and their descriptions. Match agents t
 b0 agent ls                                           # list available agents
 b0 delegate <agent> "<detailed task prompt>"          # send task (non-blocking)
 b0 delegate --thread <id> <agent> "<follow-up>"       # continue conversation
-b0 wait                                                # collect all pending results
+b0 wait                                                # wait for next completed result
+b0 wait --all                                          # wait for all pending results
 b0 reply <thread-id> "<answer>"                        # answer an agent's question
 b0 status                                              # check pending tasks
 b0 agent temp "<task>"                                 # one-off task, no named agent
