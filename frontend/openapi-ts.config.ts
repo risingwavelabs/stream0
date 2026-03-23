@@ -1,10 +1,28 @@
 import { defineConfig } from '@hey-api/openapi-ts'
 
 export default defineConfig({
-  input: '../box-backend/openapi/swagger.json',
+  input: './swagger.json',
   output: {
-    path: './src/lib/api-gen',
-    clean: true
+    path: './src/api-gen',
+    clean: true,
+    preferExportAll: true,
   },
-  plugins: ['@hey-api/client-fetch']
+  plugins: [
+    {
+      name: '@hey-api/client-ofetch',
+      runtimeConfigPath: '@/lib/client.config',
+      exportFromIndex: true,
+    },
+    {
+      name: '@tanstack/react-query',
+    },
+    {
+      name: 'zod',
+      responses: false,
+    },
+    {
+      name: '@hey-api/sdk',
+      validator: true,
+    },
+  ],
 })

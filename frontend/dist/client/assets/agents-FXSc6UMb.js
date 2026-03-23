@@ -1,1 +1,0 @@
-import{t as e}from"./jsx-runtime-DAs1UGHr.js";var t=e();function n(){return(0,t.jsxs)(t.Fragment,{children:[(0,t.jsx)(`div`,{className:`page-header`,children:(0,t.jsx)(`h2`,{children:`Agents`})}),(0,t.jsx)(`div`,{className:`empty-state`,children:(0,t.jsx)(`p`,{children:`Agent list and actions will use GET workspace-scoped /agents.`})})]})}export{n as component};

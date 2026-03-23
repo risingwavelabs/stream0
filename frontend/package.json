@@ -8,7 +8,8 @@
     "api:gen": "openapi-ts -f openapi-ts.config.ts",
     "build": "vite build && tsc --noEmit",
     "preview": "vite preview",
-    "start": "pnpx srvx --prod -s ../client dist/server/server.js"
+    "start": "pnpx srvx --prod -s ../client dist/server/server.js",
+    "gen": "cd ../box-backend && pnpm generate:openapi && cd ../frontend && openapi-ts"
   },
   "dependencies": {
     "@hey-api/client-fetch": "^0.13.1",
@@ -20,10 +21,12 @@
     "@tanstack/react-router-devtools": "^1.166.11",
     "@tanstack/react-router-ssr-query": "^1.166.10",
     "@tanstack/react-start": "^1.167.3",
+    "ofetch": "^1.5.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "redaxios": "^0.5.1",
-    "tailwind-merge": "^2.6.0"
+    "tailwind-merge": "^2.6.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@hey-api/openapi-ts": "^0.94.4",

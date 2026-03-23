@@ -7,7 +7,15 @@ const securityPlugin: FastifyPluginAsyncTypebox = async (app) => {
   const { CORS_ORIGIN } = app.env
 
   await app.register(helmet, {
-    global: true
+    global: true,
+    contentSecurityPolicy: {
+      directives: {
+        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+        'script-src': ["'self'", "'unsafe-inline'"],
+        'worker-src': ["'self'", 'blob:'],
+        'img-src': ["'self'", 'data:', 'https:']
+      }
+    }
   })
 
   await app.register(cors, {

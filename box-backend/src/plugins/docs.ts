@@ -1,6 +1,6 @@
 import fp from 'fastify-plugin'
 import swagger from '@fastify/swagger'
-import swaggerUi from '@fastify/swagger-ui'
+import scalarApiReference from '@scalar/fastify-api-reference'
 import type { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox'
 import { APP_NAME, APP_VERSION } from '../config/meta'
 
@@ -27,7 +27,7 @@ const docsPlugin: FastifyPluginAsyncTypebox = async (app) => {
     }
   })
 
-  await app.register(swaggerUi, {
+  await app.register(scalarApiReference, {
     routePrefix: '/docs'
   })
 }
