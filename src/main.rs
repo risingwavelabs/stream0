@@ -146,6 +146,9 @@ enum AgentCommand {
         task: String,
         #[arg(long, default_value = "You are a helpful assistant. Complete the task. Be concise.")]
         instructions: String,
+        /// Runtime: auto (default), claude, or codex
+        #[arg(long, default_value = "auto")]
+        runtime: String,
     },
 }
 
@@ -407,7 +410,7 @@ async fn main() {
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
-            AgentCommand::Temp { workspace, task, instructions } => { let workspace = resolve_workspace(workspace);
+            AgentCommand::Temp { workspace, task, instructions, runtime } => { let workspace = resolve_workspace(workspace);
                 let task_content = if !std::io::stdin().is_terminal() {
                     use std::io::Read;
                     let mut buf = String::new();
@@ -421,7 +424,7 @@ async fn main() {
                     task
                 };
                 let task_content = expand_file_refs(&task_content);
-                cmd_agent_temp(&workspace, &task_content, &instructions).await;
+                cmd_agent_temp(&workspace, &task_content, &instructions, &runtime).await;
             }
         },
 
@@ -710,13 +713,13 @@ async fn cmd_invite(name: &str) {
     }
 }
 
-async fn cmd_agent_temp(workspace: &str, task: &str, instructions: &str) {
+async fn cmd_agent_temp(workspace: &str, task: &str, instructions: &str, runtime: &str) {
     let mut cfg = config::CliConfig::load();
     let lead_id = cfg.lead_id();
     let client = make_client(&cfg);
 
     let temp_name = format!("temp-{}", &uuid::Uuid::new_v4().to_string()[..8]);
-    if let Err(e) = client.register_agent(workspace, &temp_name, "", instructions, "local", "auto", true).await {
+    if let Err(e) = client.register_agent(workspace, &temp_name, "", instructions, "local", runtime, true).await {
         eprintln!("Error: {}", e); std::process::exit(1);
     }
 
