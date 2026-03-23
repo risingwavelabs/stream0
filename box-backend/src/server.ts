@@ -1,7 +1,13 @@
+import { existsSync } from 'node:fs'
+
 import { buildApp } from './app'
 import { loadEnv } from './config/env'
 
 async function start() {
+  if (existsSync('.env')) {
+    process.loadEnvFile('.env')
+  }
+
   const env = loadEnv()
   const app = buildApp({ env })
 

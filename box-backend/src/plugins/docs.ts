@@ -14,6 +14,15 @@ const docsPlugin: FastifyPluginAsyncTypebox = async (app) => {
       info: {
         title: `${APP_NAME} API`,
         version: APP_VERSION
+      },
+      components: {
+        securitySchemes: {
+          bearerAuth: {
+            type: 'http',
+            scheme: 'bearer',
+            bearerFormat: 'JWT'
+          }
+        }
       }
     }
   })

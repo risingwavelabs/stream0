@@ -5,7 +5,7 @@
   "private": true,
   "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "tsx watch --include './src/*' ./src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -28,6 +28,7 @@
     "@fastify/swagger-ui": "^5.2.5",
     "@fastify/type-provider-typebox": "^6.1.0",
     "@sinclair/typebox": "^0.34.48",
+    "@supabase/supabase-js": "^2.100.0",
     "env-schema": "^7.0.0",
     "fastify": "^5.8.2",
     "fastify-plugin": "^5.1.0"

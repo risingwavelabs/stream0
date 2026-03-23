@@ -44,7 +44,7 @@ describe('buildApp', () => {
 
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({
-      name: 'box0-flow',
+      name: 'box-backend',
       version: '1.0.0',
       environment: 'test'
     })
@@ -70,5 +70,31 @@ describe('buildApp', () => {
       message: 'Route GET /missing not found'
     })
     expect(response.json()).toHaveProperty('requestId')
+  })
+
+  it('exposes bearer auth in the OpenAPI spec', async () => {
+    const app = buildApp({
+      env: buildEnv({
+        NODE_ENV: 'test',
+        ENABLE_SWAGGER: true
+      })
+    })
+    apps.push(app)
+    await app.ready()
+
+    const spec = app.swagger()
+
+    expect(spec.components?.securitySchemes).toMatchObject({
+      bearerAuth: {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT'
+      }
+    })
+    expect(spec.paths?.['/auth/me']?.get?.security).toEqual([
+      {
+        bearerAuth: []
+      }
+    ])
   })
 })

@@ -9,6 +9,7 @@ import { buildLoggerConfig } from './config/logger'
 import modulesPlugin from './modules'
 import docsPlugin from './plugins/docs'
 import securityPlugin from './plugins/security'
+import supabasePlugin from './plugins/supabase'
 
 export type BuildAppOptions = {
   env?: AppEnv
@@ -49,6 +50,7 @@ export function buildApp(options: BuildAppOptions = {}) {
   app.register(sensible)
   app.register(securityPlugin)
   app.register(docsPlugin)
+  app.register(supabasePlugin)
   app.register(modulesPlugin)
 
   app.setNotFoundHandler((request, reply) => {
