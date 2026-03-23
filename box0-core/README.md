@@ -182,6 +182,20 @@ These are the commands you run. Everything else is handled by your agent automat
 
 Open your browser to the server URL (default `http://localhost:8080`) and log in with your API key. Manage workers, view tasks, monitor nodes, and manage your team from the UI.
 
+## Web API layering
+
+For browser-facing applications, use this layering:
+
+- Frontend -> `box-backend` (BFF)
+- `box-backend` -> `box0-core`
+
+`box0-core` remains an internal control-plane API. Frontend API contracts should be generated from backend OpenAPI:
+
+```bash
+pnpm --dir box-backend swagger:generate
+pnpm --dir frontend api:gen
+```
+
 ## License
 
 MIT License. Copyright (c) 2026 RisingWave Labs.

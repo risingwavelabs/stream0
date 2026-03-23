@@ -8,26 +8,34 @@ function TaskDetailPage() {
   const { taskId } = Route.useParams()
   return (
     <>
-      <div style={{ marginBottom: 16 }}>
-        <Link
-          to="/tasks"
-          style={{
-            color: 'var(--text-secondary)',
-            textDecoration: 'none',
-            fontSize: 13,
-          }}
-        >
+      <div className="route-back-row">
+        <Link to="/tasks" className="route-back-link">
           &larr; Tasks
         </Link>
       </div>
       <div className="page-header">
-        <h2>Task</h2>
+        <div>
+          <h2>Task Detail</h2>
+          <p className="page-subtitle">
+            Execution metadata and timeline for this task.
+          </p>
+        </div>
       </div>
       <div className="card">
+        <div className="card-header">Task summary</div>
         <div className="card-body">
           <dl className="detail-grid">
             <dt>ID</dt>
-            <dd style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>{taskId}</dd>
+            <dd className="mono-detail">{taskId}</dd>
+            <dt>Status</dt>
+            <dd>
+              <span className="status-dot working" />
+              Running
+            </dd>
+            <dt>Workspace</dt>
+            <dd>core</dd>
+            <dt>Owner</dt>
+            <dd>planner</dd>
           </dl>
         </div>
       </div>

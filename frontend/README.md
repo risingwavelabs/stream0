@@ -1,42 +1,73 @@
-# TanStack Start - Basic React Query Example
+# Box0 Frontend
 
-A TanStack Start example demonstrating integration with TanStack Query (React Query).
+TanStack Start web dashboard for Box0.
 
-- [TanStack Router Docs](https://tanstack.com/router)
-- [TanStack Query Docs](https://tanstack.com/query)
+## API architecture
 
-## Start a new project based on this example
+- Frontend calls `box-backend` (BFF).
+- `box-backend` proxies/composes `box0-core`.
+- Frontend should not directly call `box0-core` in the target architecture.
 
-To start a new project based on this example, run:
+Current migration status:
 
-```sh
-npx gitpick TanStack/router/tree/main/examples/react/start-basic-react-query start-basic-react-query
+- Auth and system routes are already in `box-backend`.
+- Some dashboard reads still call legacy `box0-core` endpoints directly and should be migrated to backend BFF routes.
+
+## OpenAPI and SDK generation
+
+This frontend uses `@hey-api/openapi-ts` to generate typed API clients from backend OpenAPI.
+
+Input spec:
+
+- `../box-backend/openapi/swagger.json`
+
+Generate client:
+
+```bash
+pnpm api:gen
 ```
 
-## Getting Started
+Generated files:
 
-From your terminal:
+- `src/lib/api-gen/*` (auto-generated, do not edit manually)
 
-```sh
+Runtime wrapper:
+
+- `src/lib/backend-api.ts`
+
+High-priority migration mapping:
+
+- Workspaces: `/api/workspaces` -> core `/workspaces`
+- Machines: `/api/machines` -> core `/machines`
+- Users: `/api/users` -> core `/users`
+- Tasks: `/api/workspaces/:workspace/tasks` -> core `/workspaces/{workspace_name}/tasks`
+
+Workflow for API changes:
+
+1. Update backend routes in `box-backend`.
+2. Regenerate backend OpenAPI:
+
+```bash
+pnpm --dir ../box-backend swagger:generate
+```
+
+3. Regenerate frontend SDK:
+
+```bash
+pnpm api:gen
+```
+
+This mirrors the `boxcrew` workflow where frontend API types are generated from backend OpenAPI contracts.
+
+## Local development
+
+```bash
 pnpm install
 pnpm dev
 ```
 
-This starts your app in development mode, rebuilding assets on file changes.
+Build:
 
-## Build
-
-To build the app for production:
-
-```sh
+```bash
 pnpm build
 ```
-
-## TanStack Query Integration
-
-This example demonstrates how to use TanStack Query with TanStack Start for:
-
-- Server-side data fetching
-- Client-side caching and synchronization
-- Optimistic updates
-- Automatic refetching

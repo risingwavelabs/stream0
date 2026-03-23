@@ -24,6 +24,16 @@ Box0 is a multi-agent platform. It lets you run multiple AI agents in parallel a
 - `src/client.rs` - HTTP client for CLI-to-server communication
 - `src/config.rs` - Server config, CLI config, skill installation, pending state
 
+## Dashboard API boundary
+
+- Treat `box0-core` HTTP endpoints as internal control-plane APIs.
+- Browser frontend should not call `box0-core` directly in the target design.
+- Route browser traffic through `box-backend` as BFF.
+- Keep frontend SDK/types generated from `box-backend/openapi/swagger.json` via `@hey-api/openapi-ts`.
+- For API changes, regenerate contracts in order:
+  - `pnpm --dir box-backend swagger:generate`
+  - `pnpm --dir frontend api:gen`
+
 ## Auth model
 
 - Users have unique keys. Keys identify users, not groups.

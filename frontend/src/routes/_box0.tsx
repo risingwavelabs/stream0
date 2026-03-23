@@ -8,18 +8,20 @@ import {
 import * as React from 'react'
 import {
   apiGet,
-  clearStoredAuth,
-  getStoredApiKey,
+  getAccessToken,
   getStoredWorkspace,
+  signOut,
   setStoredWorkspace,
 } from '~/lib/box0-api'
 
 type WorkspacesResponse = { workspaces?: { name: string }[] }
 
 export const Route = createFileRoute('/_box0')({
-  beforeLoad: () => {
+  beforeLoad: async () => {
     if (typeof window === 'undefined') return
-    if (!getStoredApiKey()) throw redirect({ to: '/login' })
+
+    const token = await getAccessToken()
+    if (!token) throw redirect({ to: '/login' })
   },
   component: Box0Layout,
 })
@@ -32,8 +34,13 @@ function Box0Layout() {
   })
 
   React.useEffect(() => {
-    apiGet<WorkspacesResponse>('/workspaces')
-      .then((data) => {
+    let active = true
+
+    const loadWorkspaces = async () => {
+      try {
+        const data = await apiGet<WorkspacesResponse>('/workspaces')
+        if (!active) return
+
         const list = data.workspaces || []
         setWorkspaces(list)
         const saved = getStoredWorkspace()
@@ -43,11 +50,27 @@ function Box0Layout() {
           setWorkspace(list[0].name)
           setStoredWorkspace(list[0].name)
         }
-      })
-      .catch(() => {
-        clearStoredAuth()
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message.toLowerCase() : ''
+
+        // During auth migration we may still hit legacy endpoints that expect X-API-Key.
+        // Do not force sign-out for this case on initial page entry.
+        if (message.includes('missing x-api-key header')) {
+          return
+        }
+
+        await signOut()
+        if (!active) return
         navigate({ to: '/login' })
-      })
+      }
+    }
+
+    void loadWorkspaces()
+
+    return () => {
+      active = false
+    }
   }, [navigate])
 
   const onWorkspaceChange = (name: string) => {
@@ -59,54 +82,53 @@ function Box0Layout() {
     <div className="app-layout">
       <nav className="sidebar">
         <div className="sidebar-logo">
-          Box<span>0</span>
+          <div className="sidebar-logo-mark">B0</div>
+          <div>
+            <div className="sidebar-logo-title">Box0</div>
+            <div className="sidebar-logo-subtitle">Operations Hub</div>
+          </div>
         </div>
+        <div className="sidebar-section-title">Primary</div>
         <div className="sidebar-nav">
           <Link
             to="/tasks"
             activeOptions={{ exact: false }}
             activeProps={{ className: 'active' }}
-            className=""
+            className="sidebar-link"
           >
-            <span className="nav-icon">T</span> Tasks
+            <span className="nav-icon">▦</span> Tasks
           </Link>
         </div>
-        <div
-          className="sidebar-nav"
-          style={{
-            borderTop: '1px solid rgba(255,255,255,0.08)',
-            paddingTop: 8,
-          }}
-        >
+        <div className="sidebar-section-title">Resources</div>
+        <div className="sidebar-nav">
           <Link
             to="/agents"
+            className="sidebar-link"
             activeProps={{ className: 'active' }}
-            style={{ fontSize: 13, opacity: 0.7 }}
           >
-            <span className="nav-icon">A</span> Agents
+            <span className="nav-icon">◉</span> Agents
           </Link>
           <Link
             to="/machines"
+            className="sidebar-link"
             activeProps={{ className: 'active' }}
-            style={{ fontSize: 13, opacity: 0.7 }}
           >
-            <span className="nav-icon">M</span> Machines
+            <span className="nav-icon">◫</span> Machines
           </Link>
           <Link
             to="/users"
+            className="sidebar-link"
             activeProps={{ className: 'active' }}
-            style={{ fontSize: 13, opacity: 0.7 }}
           >
-            <span className="nav-icon">U</span> Users
+            <span className="nav-icon">◌</span> Users
           </Link>
         </div>
         <div className="sidebar-group">
           <label>Workspace</label>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <div className="sidebar-workspace-row">
             <select
               value={workspace}
               onChange={(e) => onWorkspaceChange(e.target.value)}
-              style={{ flex: 1 }}
             >
               {workspaces.map((w) => (
                 <option key={w.name} value={w.name}>
@@ -117,25 +139,21 @@ function Box0Layout() {
             <Link
               to="/workspaces"
               title="Manage workspaces"
-              style={{
-                color: 'var(--text-sidebar)',
-                opacity: 0.5,
-                fontSize: 16,
-                textDecoration: 'none',
-                padding: 2,
-              }}
+              className="sidebar-settings-link"
             >
               &#9881;
             </Link>
           </div>
         </div>
         <div className="sidebar-footer">
-          <div className="user-name" />
+          <div className="user-name">Signed in with Supabase</div>
           <button
             type="button"
+            className="btn btn-outline btn-sm sidebar-signout"
             onClick={() => {
-              clearStoredAuth()
-              navigate({ to: '/login' })
+              void signOut().finally(() => {
+                navigate({ to: '/login' })
+              })
             }}
           >
             Sign out
