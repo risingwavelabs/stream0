@@ -2,6 +2,10 @@
 
 An open-source agent swarm platform. Run multiple AI agents in parallel on your laptop or across a fleet of machines. Define agents with different roles, delegate tasks, and collect results. Single Rust binary with built-in web dashboard. Works with Claude Code and Codex.
 
+<p align="center">
+  <img src="docs/hero.svg" alt="Box0 Architecture" width="800">
+</p>
+
 ## Why Box0
 
 More agents means more work done. But running a swarm of agents raises real problems: where do they run, how do you assign work, how do you add machines, and how do you know what each agent is doing.
