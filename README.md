@@ -132,7 +132,7 @@ b0 skill install codex                       Install skill for Codex
 ## Learn more
 
 - [Multi-machine setup](docs/multi-machine.md) - distribute agents across machines
-- [Teams](docs/teams.md) - share a Box0 server with multiple users
+- [Workspaces](docs/teams.md) - share a Box0 server with multiple users
 - [Architecture](docs/architecture.md) - task flow, data model, and diagrams
 - [CLI reference](docs/cli.md) - full command reference
 
