@@ -533,6 +533,8 @@ struct CreateCronRequest {
     agent: String,
     schedule: String,
     task: String,
+    #[serde(default)]
+    end_date: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -557,7 +559,7 @@ async fn create_cron_handler(
     if crate::scheduler::parse_schedule_secs(&req.schedule).is_none() {
         return error_response(StatusCode::BAD_REQUEST, "invalid schedule. Use: 30s, 5m, 1h, 6h, 1d");
     }
-    match state.db.create_cron_job(&workspace_name, &req.agent, &req.schedule, &req.task, &caller.user.id) {
+    match state.db.create_cron_job(&workspace_name, &req.agent, &req.schedule, &req.task, &caller.user.id, req.end_date.as_deref()) {
         Ok(job) => (StatusCode::CREATED, Json(serde_json::to_value(job).unwrap())).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }

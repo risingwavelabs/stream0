@@ -129,6 +129,7 @@ pub struct CronJob {
     pub task: String,
     pub enabled: bool,
     pub last_run: Option<DateTime<Utc>>,
+    pub end_date: Option<DateTime<Utc>>,
     pub created_by: String,
     pub created_at: DateTime<Utc>,
 }
@@ -245,6 +246,7 @@ impl Database {
         let _ = conn.execute("ALTER TABLE agents ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal'", []);
         let _ = conn.execute("ALTER TABLE agents ADD COLUMN webhook_url TEXT", []);
         let _ = conn.execute("ALTER TABLE agents ADD COLUMN slack_channel TEXT", []);
+        let _ = conn.execute("ALTER TABLE cron_jobs ADD COLUMN end_date TEXT", []);
         // Migrate old temp column to kind
         let _ = conn.execute("UPDATE agents SET kind = 'temp' WHERE temp = 1", []);
 
@@ -1138,13 +1140,15 @@ impl Database {
         schedule: &str,
         task: &str,
         created_by: &str,
+        end_date: Option<&str>,
     ) -> Result<CronJob> {
         let conn = self.conn.lock().unwrap();
         let id = format!("cron-{}", &Uuid::new_v4().to_string()[..8]);
         conn.execute(
-            "INSERT INTO cron_jobs (id, workspace_name, agent, schedule, task, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, workspace_name, agent, schedule, task, created_by],
+            "INSERT INTO cron_jobs (id, workspace_name, agent, schedule, task, created_by, end_date) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, workspace_name, agent, schedule, task, created_by, end_date],
         )?;
+        let parsed_end = end_date.map(|s| Self::parse_ts(s));
         Ok(CronJob {
             id,
             workspace_name: workspace_name.to_string(),
@@ -1153,34 +1157,40 @@ impl Database {
             task: task.to_string(),
             enabled: true,
             last_run: None,
+            end_date: parsed_end,
             created_by: created_by.to_string(),
             created_at: Utc::now(),
         })
     }
 
+    fn parse_cron_row(row: &rusqlite::Row) -> rusqlite::Result<CronJob> {
+        let last_run_str: Option<String> = row.get(6)?;
+        let end_date_str: Option<String> = row.get(7)?;
+        let ts: String = row.get(9)?;
+        let enabled: i32 = row.get(5)?;
+        Ok(CronJob {
+            id: row.get(0)?,
+            workspace_name: row.get(1)?,
+            agent: row.get(2)?,
+            schedule: row.get(3)?,
+            task: row.get(4)?,
+            enabled: enabled != 0,
+            last_run: last_run_str.map(|s| Database::parse_ts(&s)),
+            end_date: end_date_str.map(|s| Database::parse_ts(&s)),
+            created_by: row.get(8)?,
+            created_at: Database::parse_ts(&ts),
+        })
+    }
+
+    const CRON_COLS: &str = "id, workspace_name, agent, schedule, task, enabled, last_run, end_date, created_by, created_at";
+
     pub fn list_cron_jobs(&self, workspace_name: &str) -> Result<Vec<CronJob>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, workspace_name, agent, schedule, task, enabled, last_run, created_by, created_at
-             FROM cron_jobs WHERE workspace_name = ?1 ORDER BY created_at",
+            &format!("SELECT {} FROM cron_jobs WHERE workspace_name = ?1 ORDER BY created_at", Self::CRON_COLS),
         )?;
         let jobs = stmt
-            .query_map(params![workspace_name], |row| {
-                let last_run_str: Option<String> = row.get(6)?;
-                let ts: String = row.get(8)?;
-                let enabled: i32 = row.get(5)?;
-                Ok(CronJob {
-                    id: row.get(0)?,
-                    workspace_name: row.get(1)?,
-                    agent: row.get(2)?,
-                    schedule: row.get(3)?,
-                    task: row.get(4)?,
-                    enabled: enabled != 0,
-                    last_run: last_run_str.map(|s| Database::parse_ts(&s)),
-                    created_by: row.get(7)?,
-                    created_at: Database::parse_ts(&ts),
-                })
-            })?
+            .query_map(params![workspace_name], Self::parse_cron_row)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(jobs)
     }
@@ -1188,25 +1198,10 @@ impl Database {
     pub fn get_all_enabled_cron_jobs(&self) -> Result<Vec<CronJob>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, workspace_name, agent, schedule, task, enabled, last_run, created_by, created_at
-             FROM cron_jobs WHERE enabled = 1",
+            &format!("SELECT {} FROM cron_jobs WHERE enabled = 1", Self::CRON_COLS),
         )?;
         let jobs = stmt
-            .query_map([], |row| {
-                let last_run_str: Option<String> = row.get(6)?;
-                let ts: String = row.get(8)?;
-                Ok(CronJob {
-                    id: row.get(0)?,
-                    workspace_name: row.get(1)?,
-                    agent: row.get(2)?,
-                    schedule: row.get(3)?,
-                    task: row.get(4)?,
-                    enabled: true,
-                    last_run: last_run_str.map(|s| Database::parse_ts(&s)),
-                    created_by: row.get(7)?,
-                    created_at: Database::parse_ts(&ts),
-                })
-            })?
+            .query_map([], Self::parse_cron_row)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(jobs)
     }

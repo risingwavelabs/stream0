@@ -223,6 +223,9 @@ enum CronCommand {
         /// Slack channel to notify (e.g. "#ci-alerts")
         #[arg(long)]
         slack: Option<String>,
+        /// End date: stop running after this time (e.g. "2026-04-24" or "2026-04-24T12:00:00Z")
+        #[arg(long)]
+        until: Option<String>,
     },
     /// List scheduled tasks
     Ls {
@@ -545,7 +548,7 @@ async fn main() {
         },
 
         Command::Cron { command } => match command {
-            CronCommand::Add { workspace, agent, every, task, webhook, slack } => { let workspace = resolve_workspace(workspace);
+            CronCommand::Add { workspace, agent, every, task, webhook, slack, until } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
 
@@ -563,7 +566,7 @@ async fn main() {
                     }
                 };
 
-                match client.create_cron_job(&workspace, &agent_name, &every, &task).await {
+                match client.create_cron_job(&workspace, &agent_name, &every, &task, until.as_deref()).await {
                     Ok(job) => println!("Cron job \"{}\" created. Agent \"{}\" will run every {}.", job.id, agent_name, every),
                     Err(e) => {
                         // Roll back auto-created agent if cron job creation fails

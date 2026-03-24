@@ -266,10 +266,12 @@ impl BhClient {
 
     // --- Cron Jobs ---
 
-    pub async fn create_cron_job(&self, workspace: &str, agent: &str, schedule: &str, task: &str) -> Result<crate::db::CronJob> {
+    pub async fn create_cron_job(&self, workspace: &str, agent: &str, schedule: &str, task: &str, end_date: Option<&str>) -> Result<crate::db::CronJob> {
+        let mut body = serde_json::json!({"agent": agent, "schedule": schedule, "task": task});
+        if let Some(d) = end_date { body["end_date"] = serde_json::json!(d); }
         let req = self.client
             .post(format!("{}/workspaces/{}/cron", self.base_url, workspace))
-            .json(&serde_json::json!({"agent": agent, "schedule": schedule, "task": task}));
+            .json(&body);
         let resp = self.request(req).await?;
         Ok(resp.json().await?)
     }

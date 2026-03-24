@@ -296,7 +296,7 @@ async fn test_cron_crud() {
         .unwrap();
 
     // Create cron job
-    let job = client.create_cron_job("admin", "seo-agent", "6h", "Check the website SEO").await.unwrap();
+    let job = client.create_cron_job("admin", "seo-agent", "6h", "Check the website SEO", None).await.unwrap();
     assert!(job.id.starts_with("cron-"));
     assert_eq!(job.agent, "seo-agent");
     assert_eq!(job.schedule, "6h");
@@ -334,7 +334,7 @@ async fn test_cron_invalid_schedule() {
         .unwrap();
 
     // Invalid schedule should fail
-    let result = client.create_cron_job("admin", "agent", "invalid", "task").await;
+    let result = client.create_cron_job("admin", "agent", "invalid", "task", None).await;
     assert!(result.is_err());
 }
 
