@@ -91,10 +91,12 @@ impl BhClient {
 
     // --- Agents (workspace-scoped) ---
 
-    pub async fn register_agent(&self, workspace: &str, name: &str, description: &str, instructions: &str, machine_id: &str, runtime: &str, kind: &str) -> Result<crate::db::Agent> {
+    pub async fn register_agent(&self, workspace: &str, name: &str, description: &str, instructions: &str, machine_id: &str, runtime: &str, kind: &str, webhook_url: Option<&str>) -> Result<crate::db::Agent> {
+        let mut body = serde_json::json!({"name": name, "description": description, "instructions": instructions, "machine_id": machine_id, "runtime": runtime, "kind": kind});
+        if let Some(url) = webhook_url { body["webhook_url"] = serde_json::json!(url); }
         let req = self.client
             .post(format!("{}/workspaces/{}/agents", self.base_url, workspace))
-            .json(&serde_json::json!({"name": name, "description": description, "instructions": instructions, "machine_id": machine_id, "runtime": runtime, "kind": kind}));
+            .json(&body);
         let resp = self.request(req).await?;
         Ok(resp.json().await?)
     }

@@ -71,6 +71,7 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                 let agent_name = agent.name.clone();
                 let agent_runtime = agent.runtime.clone();
                 let agent_timeout = if agent.timeout > 0 { agent.timeout as u64 } else { TASK_TIMEOUT_SECS };
+                let agent_webhook = agent.webhook_url.clone();
                 let workspace_root = workspace_root.clone();
                 let sessions = sessions.clone();
                 let msg = msg.clone();
@@ -148,6 +149,10 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                             if let Ok(Some(task)) = state.db.get_task_by_thread(&tenant, &msg.thread_id) {
                                 let _ = state.db.update_task_status(&tenant, &task.id, "done", Some(&output.text));
                             }
+                            // Fire webhook if configured
+                            if let Some(ref url) = agent_webhook {
+                                fire_webhook(url, &agent_name, "done", &output.text).await;
+                            }
                         }
                         Err(e) => {
                             tracing::error!(
@@ -167,6 +172,10 @@ pub async fn run_local(state: SharedState, workspace_root: std::path::PathBuf) {
                             // Update task status if this thread belongs to a task
                             if let Ok(Some(task)) = state.db.get_task_by_thread(&tenant, &msg.thread_id) {
                                 let _ = state.db.update_task_status(&tenant, &task.id, "failed", Some(&e.to_string()));
+                            }
+                            // Fire webhook if configured
+                            if let Some(ref url) = agent_webhook {
+                                let _ = fire_webhook(url, &agent_name, "failed", &e.to_string()).await;
                             }
                         }
                     }
@@ -560,4 +569,17 @@ fn parse_codex_jsonl(stdout: &str) -> anyhow::Result<RuntimeOutput> {
         text: last_text,
         session_id: None, // Codex doesn't support session resume in the same way
     })
+}
+
+async fn fire_webhook(url: &str, agent: &str, status: &str, result: &str) {
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({
+        "agent": agent,
+        "status": status,
+        "result": result,
+    });
+    match client.post(url).json(&body).timeout(std::time::Duration::from_secs(10)).send().await {
+        Ok(resp) => tracing::info!(agent, status, code = %resp.status(), "Webhook sent"),
+        Err(e) => tracing::warn!(agent, url, error = ?e, "Webhook failed"),
+    }
 }
