@@ -569,8 +569,24 @@ async fn remove_cron_handler(
     if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
         return e;
     }
+    // Get cron job's agent before deleting, so we can clean up auto-created agents
+    let cron_agent = state.db.list_cron_jobs(&workspace_name)
+        .ok()
+        .and_then(|jobs| jobs.into_iter().find(|j| j.id == cron_id))
+        .map(|j| j.agent);
+
     match state.db.remove_cron_job(&workspace_name, &cron_id, &caller.user.id) {
-        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"status": "removed"}))).into_response(),
+        Ok(()) => {
+            // Clean up auto-created cron agent
+            if let Some(agent_name) = cron_agent {
+                if let Ok(Some(agent)) = state.db.get_agent(&workspace_name, &agent_name) {
+                    if agent.kind == "cron" {
+                        let _ = state.db.remove_agent(&workspace_name, &agent_name, "");
+                    }
+                }
+            }
+            (StatusCode::OK, Json(serde_json::json!({"status": "removed"}))).into_response()
+        }
         Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
     }
 }

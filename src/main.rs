@@ -191,8 +191,9 @@ enum CronCommand {
     Add {
         #[arg(long)]
         workspace: Option<String>,
-        /// Agent name
-        agent: String,
+        /// Agent name (optional, auto-created if omitted)
+        #[arg(long)]
+        agent: Option<String>,
         /// Schedule: 30s, 5m, 1h, 6h, 1d
         #[arg(long)]
         every: String,
@@ -523,8 +524,22 @@ async fn main() {
             CronCommand::Add { workspace, agent, every, task } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.create_cron_job(&workspace, &agent, &every, &task).await {
-                    Ok(job) => println!("Cron job \"{}\" created. Agent \"{}\" will run every {}.", job.id, agent, every),
+
+                // Auto-create agent if not specified
+                let agent_name = match agent {
+                    Some(a) => a,
+                    None => {
+                        let auto_name = format!("cron-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+                        let instructions = "You are a helpful assistant. Complete the task. Be concise.";
+                        match client.register_agent(&workspace, &auto_name, "", instructions, "local", "auto", "cron").await {
+                            Ok(_) => auto_name,
+                            Err(e) => { eprintln!("Error creating agent: {}", e); std::process::exit(1); }
+                        }
+                    }
+                };
+
+                match client.create_cron_job(&workspace, &agent_name, &every, &task).await {
+                    Ok(job) => println!("Cron job \"{}\" created. Agent \"{}\" will run every {}.", job.id, agent_name, every),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
             }
