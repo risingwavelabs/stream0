@@ -76,6 +76,8 @@ pub struct Agent {
     pub timeout: i64,
     #[serde(default)]
     pub webhook_url: Option<String>,
+    #[serde(default)]
+    pub slack_channel: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -242,6 +244,7 @@ impl Database {
         let _ = conn.execute("ALTER TABLE agents ADD COLUMN timeout INTEGER NOT NULL DEFAULT 300", []);
         let _ = conn.execute("ALTER TABLE agents ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal'", []);
         let _ = conn.execute("ALTER TABLE agents ADD COLUMN webhook_url TEXT", []);
+        let _ = conn.execute("ALTER TABLE agents ADD COLUMN slack_channel TEXT", []);
         // Migrate old temp column to kind
         let _ = conn.execute("UPDATE agents SET kind = 'temp' WHERE temp = 1", []);
 
@@ -619,7 +622,7 @@ impl Database {
     // --- Agents ---
 
     fn parse_agent_row(row: &rusqlite::Row) -> rusqlite::Result<Agent> {
-        let ts: String = row.get(10)?;
+        let ts: String = row.get(11)?;
         Ok(Agent {
             name: row.get(0)?,
             description: row.get(1)?,
@@ -631,11 +634,12 @@ impl Database {
             kind: row.get(7)?,
             timeout: row.get(8)?,
             webhook_url: row.get(9)?,
+            slack_channel: row.get(10)?,
             created_at: Database::parse_ts(&ts),
         })
     }
 
-    const AGENT_COLS: &str = "name, description, instructions, machine_id, runtime, status, registered_by, kind, timeout, webhook_url, created_at";
+    const AGENT_COLS: &str = "name, description, instructions, machine_id, runtime, status, registered_by, kind, timeout, webhook_url, slack_channel, created_at";
 
     pub fn register_agent(
         &self,
@@ -648,12 +652,13 @@ impl Database {
         registered_by: &str,
         kind: &str,
         webhook_url: Option<&str>,
+        slack_channel: Option<&str>,
     ) -> Result<Agent> {
         let conn = self.conn.lock().unwrap();
 
         conn.execute(
-            "INSERT INTO agents (workspace_name, name, description, instructions, machine_id, runtime, registered_by, kind, webhook_url) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![workspace_name, name, description, instructions, machine_id, runtime, registered_by, kind, webhook_url],
+            "INSERT INTO agents (workspace_name, name, description, instructions, machine_id, runtime, registered_by, kind, webhook_url, slack_channel) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![workspace_name, name, description, instructions, machine_id, runtime, registered_by, kind, webhook_url, slack_channel],
         )?;
 
         let ts: String = conn.query_row(
@@ -673,6 +678,7 @@ impl Database {
             kind: kind.to_string(),
             timeout: 300,
             webhook_url: webhook_url.map(|s| s.to_string()),
+            slack_channel: slack_channel.map(|s| s.to_string()),
             created_at: Self::parse_ts(&ts),
         })
     }
@@ -809,12 +815,12 @@ impl Database {
     ) -> Result<Vec<(String, Agent)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT workspace_name, name, description, instructions, machine_id, runtime, status, registered_by, kind, timeout, webhook_url, created_at FROM agents WHERE machine_id = ?1 AND status = 'active'",
+            "SELECT workspace_name, name, description, instructions, machine_id, runtime, status, registered_by, kind, timeout, webhook_url, slack_channel, created_at FROM agents WHERE machine_id = ?1 AND status = 'active'",
         )?;
         let agents = stmt
             .query_map(params![machine_id], |row| {
                 let workspace: String = row.get(0)?;
-                let ts: String = row.get(11)?;
+                let ts: String = row.get(12)?;
                 Ok((
                     workspace,
                     Agent {
@@ -828,6 +834,7 @@ impl Database {
                         kind: row.get(8)?,
                         timeout: row.get(9)?,
                         webhook_url: row.get(10)?,
+                        slack_channel: row.get(11)?,
                         created_at: Database::parse_ts(&ts),
                     },
                 ))
@@ -1319,7 +1326,7 @@ mod tests {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
 
-        db.register_agent("alice", "reviewer", "Code reviewer", "Review code.", "local", "auto", &alice.id, "normal", None)
+        db.register_agent("alice", "reviewer", "Code reviewer", "Review code.", "local", "auto", &alice.id, "normal", None, None)
             .unwrap();
 
         let agents = db.list_agents("alice").unwrap();
@@ -1334,7 +1341,7 @@ mod tests {
         // But visible in shared workspace
         db.create_workspace("team", &alice.id).unwrap();
         db.add_workspace_member("team", &bob.id).unwrap();
-        db.register_agent("team", "shared-reviewer", "Shared reviewer", "Review.", "local", "auto", &alice.id, "normal", None)
+        db.register_agent("team", "shared-reviewer", "Shared reviewer", "Review.", "local", "auto", &alice.id, "normal", None, None)
             .unwrap();
 
         let team_agents = db.list_agents("team").unwrap();
@@ -1367,7 +1374,7 @@ mod tests {
         db.create_workspace("team", &alice.id).unwrap();
         db.add_workspace_member("team", &bob.id).unwrap();
 
-        db.register_agent("team", "reviewer", "Reviewer", "Review.", "local", "auto", &alice.id, "normal", None)
+        db.register_agent("team", "reviewer", "Reviewer", "Review.", "local", "auto", &alice.id, "normal", None, None)
             .unwrap();
 
         // Bob cannot remove Alice's agent

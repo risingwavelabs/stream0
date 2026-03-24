@@ -17,7 +17,7 @@ async fn start_test_server() -> (String, String, TempDir) {
     // Register local machine
     db.register_machine("local", &admin_user.id).unwrap();
 
-    let state: SharedState = Arc::new(AppState { db, inbox_notify: tokio::sync::Notify::new() });
+    let state: SharedState = Arc::new(AppState { db, inbox_notify: tokio::sync::Notify::new(), slack_token: None });
     let app = box0::server::build_router(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -102,7 +102,7 @@ async fn test_agent_crud() {
 
     // Create
     let a = client
-        .register_agent("admin", "reviewer", "Code reviewer", "Review code.", "local", "auto", "normal", None)
+        .register_agent("admin", "reviewer", "Code reviewer", "Review code.", "local", "auto", "normal", None, None)
         .await
         .unwrap();
     assert_eq!(a.name, "reviewer");
@@ -149,7 +149,7 @@ async fn test_agent_workspace_isolation() {
 
     // Alice creates an agent in her personal workspace
     alice_client
-        .register_agent("alice", "alice-agent", "", "Do stuff.", "local", "auto", "normal", None)
+        .register_agent("alice", "alice-agent", "", "Do stuff.", "local", "auto", "normal", None, None)
         .await
         .unwrap();
 
@@ -159,7 +159,7 @@ async fn test_agent_workspace_isolation() {
 
     // Bob creates his own agent
     bob_client
-        .register_agent("bob", "bob-agent", "", "Do stuff.", "local", "auto", "normal", None)
+        .register_agent("bob", "bob-agent", "", "Do stuff.", "local", "auto", "normal", None, None)
         .await
         .unwrap();
 
@@ -182,7 +182,7 @@ async fn test_agent_ownership_permission() {
 
     // Alice creates an agent in the shared workspace
     alice_client
-        .register_agent("team", "alice-agent", "", "Do stuff.", "local", "auto", "normal", None)
+        .register_agent("team", "alice-agent", "", "Do stuff.", "local", "auto", "normal", None, None)
         .await
         .unwrap();
 
@@ -200,8 +200,8 @@ async fn test_inbox_roundtrip() {
     let client = admin_client(&url, &key);
 
     // Register agents
-    client.register_agent("admin", "sender", "", "Send stuff.", "local", "auto", "normal", None).await.unwrap();
-    client.register_agent("admin", "receiver", "", "Receive stuff.", "local", "auto", "normal", None).await.unwrap();
+    client.register_agent("admin", "sender", "", "Send stuff.", "local", "auto", "normal", None, None).await.unwrap();
+    client.register_agent("admin", "receiver", "", "Receive stuff.", "local", "auto", "normal", None, None).await.unwrap();
 
     // Send message
     let content = serde_json::json!("hello");
@@ -230,8 +230,8 @@ async fn test_started_message_flow() {
     let client = admin_client(&url, &key);
 
     // Register lead and worker agent
-    client.register_agent("admin", "lead", "", "Lead agent.", "local", "auto", "normal", None).await.unwrap();
-    client.register_agent("admin", "worker-1", "", "Worker agent.", "local", "auto", "normal", None).await.unwrap();
+    client.register_agent("admin", "lead", "", "Lead agent.", "local", "auto", "normal", None, None).await.unwrap();
+    client.register_agent("admin", "worker-1", "", "Worker agent.", "local", "auto", "normal", None, None).await.unwrap();
 
     // Simulate: lead sends request to worker
     client
@@ -291,7 +291,7 @@ async fn test_cron_crud() {
 
     // Create an agent first
     client
-        .register_agent("admin", "seo-agent", "SEO checker", "Check SEO.", "local", "auto", "normal", None)
+        .register_agent("admin", "seo-agent", "SEO checker", "Check SEO.", "local", "auto", "normal", None, None)
         .await
         .unwrap();
 
@@ -329,7 +329,7 @@ async fn test_cron_invalid_schedule() {
     let client = admin_client(&url, &key);
 
     client
-        .register_agent("admin", "agent", "", "Do stuff.", "local", "auto", "normal", None)
+        .register_agent("admin", "agent", "", "Do stuff.", "local", "auto", "normal", None, None)
         .await
         .unwrap();
 

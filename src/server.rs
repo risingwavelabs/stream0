@@ -29,6 +29,7 @@ pub struct AppState {
     pub db: Database,
     /// Notifies the local daemon when new inbox messages arrive.
     pub inbox_notify: tokio::sync::Notify,
+    pub slack_token: Option<String>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -69,6 +70,8 @@ struct RegisterAgentRequest {
     kind: String,
     #[serde(default)]
     webhook_url: Option<String>,
+    #[serde(default)]
+    slack_channel: Option<String>,
 }
 
 fn default_machine_id() -> String {
@@ -324,7 +327,7 @@ async fn register_agent_handler(
         }
     }
 
-    match state.db.register_agent(&workspace_name, &req.name, &req.description, &req.instructions, &req.machine_id, &req.runtime, &caller.user.id, &req.kind, req.webhook_url.as_deref()) {
+    match state.db.register_agent(&workspace_name, &req.name, &req.description, &req.instructions, &req.machine_id, &req.runtime, &caller.user.id, &req.kind, req.webhook_url.as_deref(), req.slack_channel.as_deref()) {
         Ok(agent) => (StatusCode::CREATED, Json(serde_json::to_value(agent).unwrap())).into_response(),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -716,7 +719,7 @@ async fn create_task_handler(
     let agent_name = format!("task-{}", &uuid::Uuid::new_v4().to_string()[..8]);
     let default_instructions = "You are a helpful assistant. Complete the task. Be concise.";
     if let Err(e) = state.db.register_agent(
-        &workspace_name, &agent_name, "", default_instructions, "local", "auto", &caller.user.id, "temp", None,
+        &workspace_name, &agent_name, "", default_instructions, "local", "auto", &caller.user.id, "temp", None, None,
     ) {
         return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
     }
@@ -1076,7 +1079,7 @@ pub async fn run(config: ServerConfig) {
         first_start_info.as_ref().map(|(k, n, i)| (k.as_str(), n.as_str(), i.as_str())),
     );
 
-    let state = Arc::new(AppState { db, inbox_notify: tokio::sync::Notify::new() });
+    let state = Arc::new(AppState { db, inbox_notify: tokio::sync::Notify::new(), slack_token: config.slack_token.clone() });
 
     // Spawn daemon for "local" machine
     let daemon_state = state.clone();

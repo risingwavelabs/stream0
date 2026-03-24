@@ -14,6 +14,8 @@ pub struct ServerConfig {
     pub db_path: String,
     #[serde(default = "default_log_level")]
     pub log_level: String,
+    #[serde(default)]
+    pub slack_token: Option<String>,
 }
 
 fn default_host() -> String {
@@ -41,6 +43,7 @@ impl Default for ServerConfig {
             port: default_port(),
             db_path: default_db_path(),
             log_level: default_log_level(),
+            slack_token: None,
         }
     }
 }
@@ -76,6 +79,11 @@ impl ServerConfig {
         if let Ok(v) = std::env::var("B0_LOG_LEVEL") {
             if !v.is_empty() {
                 cfg.log_level = v;
+            }
+        }
+        if let Ok(v) = std::env::var("B0_SLACK_TOKEN") {
+            if !v.is_empty() {
+                cfg.slack_token = Some(v);
             }
         }
 
