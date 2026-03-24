@@ -811,6 +811,34 @@ async fn send_task_message_handler(
     (StatusCode::OK, Json(serde_json::json!({"status": "sent"}))).into_response()
 }
 
+// --- Threads ---
+
+#[derive(Deserialize)]
+struct ThreadsQuery {
+    #[serde(default)]
+    from_id: Option<String>,
+    #[serde(default = "default_threads_limit")]
+    limit: i64,
+}
+
+fn default_threads_limit() -> i64 { 20 }
+
+async fn list_threads_handler(
+    State(state): State<SharedState>,
+    Extension(caller): Extension<Caller>,
+    Path(workspace_name): Path<String>,
+    Query(params): Query<ThreadsQuery>,
+) -> impl IntoResponse {
+    if let Err(e) = require_workspace_member(&state, &caller, &workspace_name) {
+        return e;
+    }
+    let from_id = params.from_id.unwrap_or_else(|| caller.user.id.clone());
+    match state.db.list_threads(&workspace_name, &from_id, params.limit) {
+        Ok(threads) => (StatusCode::OK, Json(serde_json::json!({"threads": threads}))).into_response(),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
 // --- Helpers ---
 
 fn error_response(status: StatusCode, message: &str) -> axum::response::Response {
@@ -829,6 +857,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route("/workspaces/{workspace_name}/agents/{agent_name}/inbox",
             get(get_inbox_messages_handler).post(send_inbox_message_handler))
         .route("/workspaces/{workspace_name}/inbox/{message_id}/ack", post(ack_inbox_message_handler))
+        .route("/workspaces/{workspace_name}/threads", get(list_threads_handler))
         .route("/workspaces/{workspace_name}/threads/{thread_id}", get(get_thread_messages_handler))
         .route("/workspaces/{workspace_name}/agents",
             get(list_agents_handler).post(register_agent_handler))

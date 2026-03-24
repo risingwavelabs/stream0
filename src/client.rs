@@ -292,6 +292,15 @@ impl BhClient {
         Ok(())
     }
 
+    // --- Threads ---
+
+    pub async fn list_threads(&self, workspace: &str, from_id: &str, limit: i64) -> Result<Vec<crate::db::ThreadSummary>> {
+        let req = self.client.get(format!("{}/workspaces/{}/threads?from_id={}&limit={}", self.base_url, workspace, from_id, limit));
+        let resp = self.request(req).await?;
+        let body: serde_json::Value = resp.json().await?;
+        Ok(serde_json::from_value(body["threads"].clone()).unwrap_or_default())
+    }
+
     // --- Tasks ---
 
     pub async fn create_task(&self, workspace: &str, title: &str) -> Result<crate::db::Task> {

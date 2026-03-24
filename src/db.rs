@@ -77,6 +77,15 @@ pub struct Agent {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadSummary {
+    pub thread_id: String,
+    pub agent: String,
+    pub last_status: String,
+    pub first_message: String,
+    pub last_activity: DateTime<Utc>,
+}
+
 fn default_kind() -> String {
     "normal".to_string()
 }
@@ -1052,6 +1061,44 @@ impl Database {
         )
         .optional()
         .map_err(Into::into)
+    }
+
+    /// List recent threads for a user, showing agent, last message type, and time.
+    pub fn list_threads(
+        &self,
+        workspace_name: &str,
+        from_id: &str,
+        limit: i64,
+    ) -> Result<Vec<ThreadSummary>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT m.thread_id, m.to_id,
+                    (SELECT type FROM inbox_messages WHERE workspace_name = ?1 AND thread_id = m.thread_id ORDER BY created_at DESC LIMIT 1),
+                    (SELECT content FROM inbox_messages WHERE workspace_name = ?1 AND thread_id = m.thread_id AND type = 'request' ORDER BY created_at ASC LIMIT 1),
+                    MAX(m.created_at)
+             FROM inbox_messages m
+             WHERE m.workspace_name = ?1 AND m.from_id = ?2 AND m.type = 'request'
+             GROUP BY m.thread_id
+             ORDER BY MAX(m.created_at) DESC
+             LIMIT ?3",
+        )?;
+        let threads = stmt
+            .query_map(params![workspace_name, from_id, limit], |row| {
+                let content_str: Option<String> = row.get(3)?;
+                let ts: String = row.get(4)?;
+                Ok(ThreadSummary {
+                    thread_id: row.get(0)?,
+                    agent: row.get(1)?,
+                    last_status: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                    first_message: content_str
+                        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                        .unwrap_or_default(),
+                    last_activity: Database::parse_ts(&ts),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(threads)
     }
 
     /// Delete temp agents older than the given number of seconds.

@@ -55,6 +55,15 @@ enum Command {
         #[command(subcommand)]
         command: CronCommand,
     },
+    /// List recent conversation threads
+    Threads {
+        /// Workspace name
+        #[arg(long)]
+        workspace: Option<String>,
+        /// Number of threads to show
+        #[arg(long, default_value = "20")]
+        limit: i64,
+    },
     /// Delegate a task to an agent
     Delegate {
         /// Workspace name
@@ -595,6 +604,26 @@ async fn main() {
                 }
             }
         },
+
+        Command::Threads { workspace, limit } => { let workspace = resolve_workspace(workspace);
+            let mut cfg = config::CliConfig::load();
+            let lead_id = cfg.lead_id();
+            let client = make_client(&cfg);
+            match client.list_threads(&workspace, &lead_id, limit).await {
+                Ok(threads) => {
+                    if threads.is_empty() {
+                        println!("No threads.");
+                    } else {
+                        println!("{:<20} {:<18} {:<10} {:<20} {}", "THREAD", "AGENT", "STATUS", "LAST ACTIVITY", "TASK");
+                        for t in threads {
+                            let task_preview: String = t.first_message.chars().take(40).collect();
+                            println!("{:<20} {:<18} {:<10} {:<20} {}", t.thread_id, t.agent, t.last_status, t.last_activity.format("%Y-%m-%d %H:%M:%S"), task_preview);
+                        }
+                    }
+                }
+                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            }
+        }
 
         Command::Delegate { workspace, thread, agent, task } => { let workspace = resolve_workspace(workspace);
             // When --thread is used with one positional arg, it's the task, not the agent.
