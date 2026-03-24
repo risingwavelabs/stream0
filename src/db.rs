@@ -472,7 +472,7 @@ impl Database {
     pub fn get_inbox_messages(
         &self,
         workspace_name: &str,
-        agent_id: &str,
+        to_id: &str,
         status: Option<&str>,
         thread_id: Option<&str>,
     ) -> Result<Vec<InboxMessage>> {
@@ -481,7 +481,7 @@ impl Database {
             "SELECT id, thread_id, from_id, to_id, type, content, status, created_at FROM inbox_messages WHERE workspace_name = ?1 AND to_id = ?2"
                 .to_string();
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
-            vec![Box::new(workspace_name.to_string()), Box::new(agent_id.to_string())];
+            vec![Box::new(workspace_name.to_string()), Box::new(to_id.to_string())];
         let mut param_idx = 3;
 
         if let Some(s) = status {
