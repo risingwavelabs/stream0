@@ -46,11 +46,10 @@ b0 wait --all
 b0 cron add --every 6h "Check production logs for errors and summarize."
 ```
 
-**Webhooks and Slack.** Get notified when agents finish.
+**Webhooks.** Get notified when agents finish.
 
 ```bash
 b0 agent add monitor --instructions "Watch for regressions." --webhook https://example.com/hook
-b0 agent add alerter --instructions "Triage alerts." --slack "#ops"
 ```
 
 **Multi-turn conversations.** Continue where you left off.
