@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 416">
-  <rect width="980" height="416" fill="#f5f0eb" rx="12"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 432">
+  <rect width="980" height="432" fill="#f5f0eb" rx="12"/>
 
   <!-- Box0 container -->
-  <rect x="232" y="20" width="724" height="376" rx="12" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
+  <rect x="232" y="20" width="724" height="392" rx="12" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
 
   <text x="268" y="56" font-family="Georgia, 'Times New Roman', serif" font-size="22" font-weight="700" fill="#2c2520" letter-spacing="-0.3">Box0</text>
   <text x="268" y="76" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#9c8e82">scheduling · cron · webhooks</text>
