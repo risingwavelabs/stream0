@@ -1,6 +1,6 @@
 # Skills
 
-A skill is a set of instructions that gets installed into your AI agent (Claude Code or Codex). Once installed, the agent reads these instructions and learns how to use Box0 autonomously. You don't need to teach it anything manually.
+A skill is a [SKILL.md](https://code.claude.com/docs/en/skills.md) file that gets installed into your AI agent. It teaches the agent how to use Box0: when to delegate, what commands to run, and how to write good prompts.
 
 ## Install
 
@@ -9,35 +9,54 @@ b0 skill install claude-code
 b0 skill install codex
 ```
 
-Pick one or both, depending on which agent you use. You only need to do this once per machine.
+Pick one or both. You only need to do this once per machine.
 
-## Where it gets installed
+## What gets installed
 
-- **Claude Code**: `~/.claude/skills/b0/SKILL.md`. Claude Code automatically loads skill files from this directory.
-- **Codex**: appends a marked section to `~/.codex/AGENTS.md`. Codex reads this file on startup.
+**Claude Code**: writes `~/.claude/skills/b0/SKILL.md` with YAML frontmatter and markdown instructions. Claude Code [automatically discovers](https://code.claude.com/docs/en/skills.md) skill files in this directory and loads them when relevant.
+
+The frontmatter includes:
+
+```yaml
+---
+name: b0
+description: |
+  Delegate tasks to AI agents via Box0. Use when the user asks to
+  review code, check security, run tests, compare tools, get multiple
+  perspectives, research a topic, analyze data, write docs, or any
+  task that could benefit from specialized or parallel execution.
+  Also use when the user mentions agent names or says "ask", "delegate",
+  "get opinions from", or "have someone".
+allowed-tools:
+  - Bash
+---
+```
+
+Claude uses the `description` field to decide when to auto-load the skill. `allowed-tools: Bash` lets the agent run `b0` commands without permission prompts.
+
+**Codex**: appends a marked section to `~/.codex/AGENTS.md`. Codex reads [AGENTS.md](https://developers.openai.com/codex/guides/agents-md) on startup as custom instructions.
 
 ## What the agent learns
 
-The skill teaches your agent to:
+The skill body teaches the agent:
 
-1. **Discover available agents** by running `b0 agent ls` and matching them to the task by description.
-2. **Compose detailed delegation prompts** with full context (file paths, diffs, branch names), not just forwarding the user's words.
-3. **Delegate tasks in parallel** to multiple agents and collect results with `b0 wait`.
-4. **Pipe large content** (diffs, file contents) via stdin.
-5. **Handle agent questions** by answering with `b0 reply` and resuming `b0 wait`.
-6. **Continue multi-turn conversations** using `--thread`.
-7. **Schedule recurring tasks** with `b0 cron add`.
-8. **Proactively check status** before responding to new user messages, so completed results are reported automatically.
+- **Discover agents**: run `b0 agent ls`, match agents to the task by description
+- **Write detailed prompts**: gather context first (read files, run `git diff`), include specifics, state the deliverable. Never just forward the user's words.
+- **Parallel execution**: delegate to multiple agents, then `b0 wait --all`
+- **Pipe large content**: `git diff | b0 delegate reviewer "Review this diff."`
+- **Handle questions**: answer with `b0 reply`, then `b0 wait` again
+- **Multi-turn**: use `--thread` to continue conversations
+- **Cron jobs**: schedule recurring tasks with `b0 cron add`
+- **Proactive status**: run `b0 status` before responding to check for completed results
+- **Error handling**: retry, try a different agent, handle it yourself, or report to user
 
-The skill also includes prompt engineering guidance: examples of bad vs. good delegation prompts, and error handling strategies (retry, fallback, or escalate).
-
-## View the full skill content
+## View the installed content
 
 ```bash
 b0 skill show
 ```
 
-This prints the exact instructions that your agent receives.
+Prints the exact SKILL.md content that gets installed.
 
 ## Uninstall
 
@@ -45,15 +64,3 @@ This prints the exact instructions that your agent receives.
 b0 skill uninstall claude-code
 b0 skill uninstall codex
 ```
-
-## How it connects
-
-After installation, the typical flow is:
-
-1. You ask your agent something (e.g., "Review this PR from three angles").
-2. The agent reads the skill, recognizes it should delegate, runs `b0 agent ls`.
-3. The agent composes detailed prompts and runs `b0 delegate` for each sub-task.
-4. Box0 dispatches tasks to the appropriate agents in parallel.
-5. The agent runs `b0 wait`, collects results, and synthesizes a response for you.
-
-You only type one message. The skill handles the rest.
