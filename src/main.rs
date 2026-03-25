@@ -357,7 +357,7 @@ async fn main() {
             AgentCommand::Add { workspace, name, description, instructions, machine, runtime, webhook, slack } => { let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
                 let client = make_client(&cfg);
-                match client.register_agent(&workspace, &name, &description, &instructions, &machine, &runtime, "normal", webhook.as_deref(), slack.as_deref()).await {
+                match client.register_agent(&workspace, &name, &description, &instructions, &machine, &runtime, "background", webhook.as_deref(), slack.as_deref()).await {
                     Ok(a) => println!("Agent \"{}\" registered in workspace \"{}\" on machine \"{}\" (runtime: {}).", a.name, workspace, a.machine_id, a.runtime),
                     Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
                 }
@@ -884,7 +884,7 @@ async fn cmd_delegate(workspace: &str, agent: &str, task: &str, continue_thread:
                 workspace: workspace.to_string(),
                 task: task.to_string(),
                 created_at: chrono::Utc::now().to_rfc3339(),
-                kind: "normal".to_string(),
+                kind: "background".to_string(),
             });
             let _ = config::CliConfig::save_pending(&pending);
             println!("{}", thread_id);
@@ -1089,7 +1089,7 @@ async fn cmd_reply(workspace: &str, thread_id: &str, message: &str) {
                 workspace: workspace.to_string(),
                 task: message.to_string(),
                 created_at: chrono::Utc::now().to_rfc3339(),
-                kind: "normal".to_string(),
+                kind: "background".to_string(),
             });
             let _ = config::CliConfig::save_pending(&pending);
             println!("Reply sent to {} (thread {}). Run b0 wait to collect response.", agent, thread_id);

@@ -91,7 +91,7 @@ pub struct ThreadSummary {
 }
 
 fn default_kind() -> String {
-    "normal".to_string()
+    "background".to_string()
 }
 
 fn default_timeout() -> i64 {
@@ -204,7 +204,7 @@ impl Database {
                 runtime TEXT NOT NULL DEFAULT 'auto',
                 status TEXT NOT NULL DEFAULT 'active',
                 registered_by TEXT NOT NULL DEFAULT '',
-                kind TEXT NOT NULL DEFAULT 'normal',
+                kind TEXT NOT NULL DEFAULT 'background',
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
                 PRIMARY KEY (workspace_name, name)
             );
@@ -243,7 +243,7 @@ impl Database {
 
         // Migrations for existing databases
         let _ = conn.execute("ALTER TABLE agents ADD COLUMN timeout INTEGER NOT NULL DEFAULT 300", []);
-        let _ = conn.execute("ALTER TABLE agents ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal'", []);
+        let _ = conn.execute("ALTER TABLE agents ADD COLUMN kind TEXT NOT NULL DEFAULT 'background'", []);
         let _ = conn.execute("ALTER TABLE agents ADD COLUMN webhook_url TEXT", []);
         let _ = conn.execute("ALTER TABLE agents ADD COLUMN slack_channel TEXT", []);
         let _ = conn.execute("ALTER TABLE cron_jobs ADD COLUMN end_date TEXT", []);
@@ -688,7 +688,7 @@ impl Database {
     pub fn list_agents(&self, workspace_name: &str) -> Result<Vec<Agent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            &format!("SELECT {} FROM agents WHERE workspace_name = ?1 AND kind = 'normal' ORDER BY created_at ASC", Self::AGENT_COLS),
+            &format!("SELECT {} FROM agents WHERE workspace_name = ?1 AND kind = 'background' ORDER BY created_at ASC", Self::AGENT_COLS),
         )?;
         let agents = stmt
             .query_map(params![workspace_name], Self::parse_agent_row)?
@@ -1321,7 +1321,7 @@ mod tests {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
 
-        db.register_agent("alice", "reviewer", "Code reviewer", "Review code.", "local", "auto", &alice.id, "normal", None, None)
+        db.register_agent("alice", "reviewer", "Code reviewer", "Review code.", "local", "auto", &alice.id, "background", None, None)
             .unwrap();
 
         let agents = db.list_agents("alice").unwrap();
@@ -1336,7 +1336,7 @@ mod tests {
         // But visible in shared workspace
         db.create_workspace("team", &alice.id).unwrap();
         db.add_workspace_member("team", &bob.id).unwrap();
-        db.register_agent("team", "shared-reviewer", "Shared reviewer", "Review.", "local", "auto", &alice.id, "normal", None, None)
+        db.register_agent("team", "shared-reviewer", "Shared reviewer", "Review.", "local", "auto", &alice.id, "background", None, None)
             .unwrap();
 
         let team_agents = db.list_agents("team").unwrap();
@@ -1369,7 +1369,7 @@ mod tests {
         db.create_workspace("team", &alice.id).unwrap();
         db.add_workspace_member("team", &bob.id).unwrap();
 
-        db.register_agent("team", "reviewer", "Reviewer", "Review.", "local", "auto", &alice.id, "normal", None, None)
+        db.register_agent("team", "reviewer", "Reviewer", "Review.", "local", "auto", &alice.id, "background", None, None)
             .unwrap();
 
         // Bob cannot remove Alice's agent

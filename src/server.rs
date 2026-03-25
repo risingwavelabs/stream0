@@ -66,7 +66,7 @@ struct RegisterAgentRequest {
     machine_id: String,
     #[serde(default = "default_runtime")]
     runtime: String,
-    #[serde(default = "default_kind_normal")]
+    #[serde(default = "default_kind_background")]
     kind: String,
     #[serde(default)]
     webhook_url: Option<String>,
@@ -82,8 +82,8 @@ fn default_runtime() -> String {
     "auto".to_string()
 }
 
-fn default_kind_normal() -> String {
-    "normal".to_string()
+fn default_kind_background() -> String {
+    "background".to_string()
 }
 
 #[derive(Deserialize)]

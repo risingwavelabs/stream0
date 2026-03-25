@@ -1,70 +1,70 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 432">
-  <rect width="980" height="432" fill="#f5f0eb" rx="12"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 520">
 
-  <!-- Box0 container -->
-  <rect x="232" y="20" width="724" height="392" rx="12" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
+  <rect width="880" height="520" fill="#f5f0eb" rx="12"/>
 
-  <text x="268" y="56" font-family="Georgia, 'Times New Roman', serif" font-size="22" font-weight="700" fill="#2c2520" letter-spacing="-0.3">Box0</text>
-  <text x="268" y="76" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#9c8e82">scheduling · cron · webhooks</text>
+  <!-- Server outer box -->
+  <rect x="20" y="20" width="840" height="480" rx="12" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
+  <text x="52" y="52" font-family="Georgia, 'Times New Roman', serif" font-size="20" font-weight="700" fill="#2c2520">Server</text>
+  <text x="52" y="72" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#9c8e82">b0 server · scheduling · cron · webhooks</text>
 
-  <!-- Row 1 -->
-  <rect x="268" y="98" width="156" height="78" rx="6" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
-  <text x="346" y="132" font-family="Georgia, 'Times New Roman', serif" font-size="15" font-weight="700" fill="#2c2520" text-anchor="middle">reviewer</text>
-  <text x="346" y="152" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="11" fill="#9c8e82" text-anchor="middle">on-demand</text>
+  <!-- Machines section -->
+  <text x="52" y="108" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#6b5d52">Machines</text>
 
-  <rect x="438" y="98" width="156" height="78" rx="6" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
-  <text x="516" y="132" font-family="Georgia, 'Times New Roman', serif" font-size="15" font-weight="700" fill="#2c2520" text-anchor="middle">security</text>
-  <text x="516" y="152" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="11" fill="#9c8e82" text-anchor="middle">on-demand</text>
+  <rect x="52" y="120" width="180" height="44" rx="6" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
+  <text x="142" y="147" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#6b5d52" text-anchor="middle">Machine A · local</text>
 
-  <rect x="608" y="98" width="156" height="78" rx="6" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
-  <text x="686" y="132" font-family="Georgia, 'Times New Roman', serif" font-size="15" font-weight="700" fill="#2c2520" text-anchor="middle">writer</text>
-  <text x="686" y="152" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="11" fill="#9c8e82" text-anchor="middle">on-demand</text>
+  <rect x="244" y="120" width="180" height="44" rx="6" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
+  <text x="334" y="147" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#6b5d52" text-anchor="middle">Machine B · gpu-box</text>
 
-  <rect x="778" y="98" width="156" height="78" rx="6" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
-  <text x="856" y="132" font-family="Georgia, 'Times New Roman', serif" font-size="15" font-weight="700" fill="#2c2520" text-anchor="middle">planner</text>
-  <text x="856" y="152" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="11" fill="#9c8e82" text-anchor="middle">on-demand</text>
+  <rect x="436" y="120" width="180" height="44" rx="6" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
+  <text x="526" y="147" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#6b5d52" text-anchor="middle">Machine C · cloud</text>
 
-  <!-- Row 2 -->
-  <rect x="268" y="192" width="156" height="78" rx="6" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
-  <text x="346" y="226" font-family="Georgia, 'Times New Roman', serif" font-size="15" font-weight="700" fill="#2c2520" text-anchor="middle">builder</text>
-  <text x="346" y="246" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="11" fill="#9c8e82" text-anchor="middle">on-demand</text>
+  <text x="636" y="147" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" fill="#d6cdc4">...</text>
 
-  <rect x="438" y="192" width="156" height="78" rx="6" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
-  <text x="516" y="226" font-family="Georgia, 'Times New Roman', serif" font-size="15" font-weight="700" fill="#2c2520" text-anchor="middle">monitor</text>
-  <text x="516" y="246" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="11" fill="#6b5d52" text-anchor="middle">long-running</text>
+  <!-- Divider -->
+  <line x1="52" y1="186" x2="828" y2="186" stroke="#d6cdc4" stroke-width="1"/>
 
-  <rect x="608" y="192" width="156" height="78" rx="6" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
-  <text x="686" y="226" font-family="Georgia, 'Times New Roman', serif" font-size="15" font-weight="700" fill="#2c2520" text-anchor="middle">qa-bot</text>
-  <text x="686" y="246" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="11" fill="#6b5d52" text-anchor="middle">cron</text>
+  <!-- Workspaces section -->
+  <text x="52" y="214" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#6b5d52">Workspaces</text>
 
-  <rect x="778" y="192" width="156" height="78" rx="6" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
-  <text x="856" y="226" font-family="Georgia, 'Times New Roman', serif" font-size="15" font-weight="700" fill="#2c2520" text-anchor="middle">analyst</text>
-  <text x="856" y="246" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="11" fill="#9c8e82" text-anchor="middle">on-demand</text>
+  <!-- Workspace: dev-team -->
+  <rect x="52" y="228" width="380" height="248" rx="8" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
+  <text x="72" y="252" font-family="Georgia, 'Times New Roman', serif" font-size="14" font-weight="700" fill="#2c2520">dev-team</text>
 
-  <text x="948" y="240" font-family="Georgia, serif" font-size="14" fill="#9c8e82" text-anchor="middle">...</text>
+  <rect x="72" y="268" width="156" height="60" rx="6" fill="#f5f0eb" stroke="#d6cdc4" stroke-width="1"/>
+  <text x="150" y="290" font-family="Georgia, 'Times New Roman', serif" font-size="13" font-weight="700" fill="#2c2520" text-anchor="middle">code review</text>
+  <text x="150" y="311" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="10" fill="#9c8e82" text-anchor="middle">background · Machine A</text>
 
-  <line x1="268" y1="294" x2="934" y2="294" stroke="#d6cdc4" stroke-width="1"/>
+  <rect x="244" y="268" width="156" height="60" rx="6" fill="#f5f0eb" stroke="#d6cdc4" stroke-width="1"/>
+  <text x="322" y="290" font-family="Georgia, 'Times New Roman', serif" font-size="13" font-weight="700" fill="#2c2520" text-anchor="middle">security audit</text>
+  <text x="322" y="311" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="10" fill="#9c8e82" text-anchor="middle">background · Machine A</text>
 
-  <!-- Machines -->
-  <rect x="268" y="314" width="210" height="48" rx="6" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
-  <text x="373" y="343" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="13" fill="#6b5d52" text-anchor="middle">Machine A · local</text>
+  <rect x="72" y="340" width="156" height="60" rx="6" fill="#f5f0eb" stroke="#d6cdc4" stroke-width="1"/>
+  <text x="150" y="362" font-family="Georgia, 'Times New Roman', serif" font-size="13" font-weight="700" fill="#2c2520" text-anchor="middle">nightly audit</text>
+  <text x="150" y="383" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="10" fill="#9c8e82" text-anchor="middle">cron · Machine A</text>
 
-  <rect x="494" y="314" width="210" height="48" rx="6" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
-  <text x="599" y="343" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="13" fill="#6b5d52" text-anchor="middle">Machine B · gpu-box</text>
+  <rect x="244" y="340" width="156" height="60" rx="6" fill="#f5f0eb" stroke="#d6cdc4" stroke-width="1"/>
+  <text x="322" y="362" font-family="Georgia, 'Times New Roman', serif" font-size="13" font-weight="700" fill="#2c2520" text-anchor="middle">quick task</text>
+  <text x="322" y="383" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="10" fill="#9c8e82" text-anchor="middle">temp · Machine B</text>
 
-  <rect x="720" y="314" width="210" height="48" rx="6" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
-  <text x="825" y="343" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="13" fill="#6b5d52" text-anchor="middle">Machine C · cloud</text>
+  <text x="72" y="456" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="11" fill="#9c8e82">shared by Alice, Bob, Charlie</text>
 
-  <text x="948" y="343" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="14" fill="#9c8e82" text-anchor="middle">...</text>
+  <!-- Workspace: ml-team -->
+  <rect x="452" y="228" width="380" height="248" rx="8" fill="#faf7f4" stroke="#d6cdc4" stroke-width="1"/>
+  <text x="472" y="252" font-family="Georgia, 'Times New Roman', serif" font-size="14" font-weight="700" fill="#2c2520">ml-team</text>
 
-  <text x="600" y="386" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="12" fill="#9c8e82" text-anchor="middle">each machine runs Claude Code or Codex with its own credentials</text>
+  <rect x="472" y="268" width="156" height="60" rx="6" fill="#f5f0eb" stroke="#d6cdc4" stroke-width="1"/>
+  <text x="550" y="290" font-family="Georgia, 'Times New Roman', serif" font-size="13" font-weight="700" fill="#2c2520" text-anchor="middle">training</text>
+  <text x="550" y="311" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="10" fill="#9c8e82" text-anchor="middle">background · Machine B</text>
 
-  <!-- You -->
-  <rect x="24" y="192" width="168" height="86" rx="6" fill="#faf7f4" stroke="#2c2520" stroke-width="1.5"/>
-  <text x="108" y="224" font-family="Georgia, 'Times New Roman', serif" font-size="15" font-weight="700" fill="#2c2520" text-anchor="middle">You / Your AI</text>
-  <text x="108" y="244" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="10" fill="#9c8e82" text-anchor="middle">Claude Code · Codex</text>
-  <text x="108" y="258" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="10" fill="#9c8e82" text-anchor="middle">Web UI</text>
+  <rect x="644" y="268" width="156" height="60" rx="6" fill="#f5f0eb" stroke="#d6cdc4" stroke-width="1"/>
+  <text x="722" y="290" font-family="Georgia, 'Times New Roman', serif" font-size="13" font-weight="700" fill="#2c2520" text-anchor="middle">evaluation</text>
+  <text x="722" y="311" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="10" fill="#9c8e82" text-anchor="middle">background · Machine C</text>
 
-  <line x1="192" y1="235" x2="226" y2="235" stroke="#2c2520" stroke-width="1"/>
-  <polygon points="226,231 234,235 226,239" fill="#2c2520"/>
+  <rect x="472" y="340" width="156" height="60" rx="6" fill="#f5f0eb" stroke="#d6cdc4" stroke-width="1"/>
+  <text x="550" y="362" font-family="Georgia, 'Times New Roman', serif" font-size="13" font-weight="700" fill="#2c2520" text-anchor="middle">health check</text>
+  <text x="550" y="383" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="10" fill="#9c8e82" text-anchor="middle">cron · Machine B</text>
+
+  <text x="472" y="456" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="11" fill="#9c8e82">shared by Dave, Eve</text>
+
 </svg>
