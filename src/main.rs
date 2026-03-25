@@ -179,7 +179,7 @@ enum AgentCommand {
 #[derive(Subcommand)]
 enum MachineCommand {
     Join {
-        server_url: String,
+        server_url: Option<String>,
         #[arg(long)]
         name: Option<String>,
         #[arg(long)]
@@ -464,7 +464,10 @@ async fn main() {
 
         Command::Machine { command } => match command {
             MachineCommand::Join { server_url, name, key } => {
-                cmd_machine_join(&server_url, name.as_deref(), key.as_deref()).await;
+                let cfg = config::CliConfig::load();
+                let url = server_url.unwrap_or_else(|| cfg.server_url());
+                let api_key = key.or_else(|| cfg.api_key.clone());
+                cmd_machine_join(&url, name.as_deref(), api_key.as_deref()).await;
             }
             MachineCommand::Ls => {
                 let cfg = config::CliConfig::load();
