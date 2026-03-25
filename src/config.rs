@@ -217,7 +217,7 @@ impl CliConfig {
     /// Generate the core skill content (agent-agnostic).
     pub fn skill_content(server_url: &str) -> String {
         format!(
-r#"# Box0 (`b0`) Agent Delegation
+            r#"# Box0 (`b0`) Agent Delegation
 
 You have access to a team of specialized AI agents managed by Box0.
 The server is at: {server_url}
@@ -333,7 +333,7 @@ The agent remembers all previous turns.
         fs::create_dir_all(&dir)?;
 
         let content = format!(
-r#"---
+            r#"---
 name: b0
 description: |
   Delegate tasks to AI agents via Box0. Use when the user asks to

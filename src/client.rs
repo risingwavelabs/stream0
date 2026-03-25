@@ -83,7 +83,11 @@ impl BhClient {
     // --- Health ---
 
     pub async fn health(&self) -> Result<String> {
-        let resp = self.client.get(format!("{}/health", self.base_url)).send().await?;
+        let resp = self
+            .client
+            .get(format!("{}/health", self.base_url))
+            .send()
+            .await?;
         let resp = self.check_error(resp).await?;
         let body: serde_json::Value = resp.json().await?;
         Ok(body["version"].as_str().unwrap_or("unknown").to_string())
@@ -91,7 +95,16 @@ impl BhClient {
 
     // --- Agents (workspace-scoped) ---
 
-    pub async fn register_agent(&self, workspace: &str, name: &str, description: &str, instructions: &str, machine_id: &str, runtime: &str, kind: &str) -> Result<crate::db::Agent> {
+    pub async fn register_agent(
+        &self,
+        workspace: &str,
+        name: &str,
+        description: &str,
+        instructions: &str,
+        machine_id: &str,
+        runtime: &str,
+        kind: &str,
+    ) -> Result<crate::db::Agent> {
         let req = self.client
             .post(format!("{}/workspaces/{}/agents", self.base_url, workspace))
             .json(&serde_json::json!({"name": name, "description": description, "instructions": instructions, "machine_id": machine_id, "runtime": runtime, "kind": kind}));
@@ -100,46 +113,76 @@ impl BhClient {
     }
 
     pub async fn list_agents(&self, workspace: &str) -> Result<Vec<crate::db::Agent>> {
-        let req = self.client.get(format!("{}/workspaces/{}/agents", self.base_url, workspace));
+        let req = self
+            .client
+            .get(format!("{}/workspaces/{}/agents", self.base_url, workspace));
         let resp = self.request(req).await?;
         let body: AgentsResponse = resp.json().await?;
         Ok(body.agents)
     }
 
     pub async fn get_agent(&self, workspace: &str, name: &str) -> Result<crate::db::Agent> {
-        let req = self.client.get(format!("{}/workspaces/{}/agents/{}", self.base_url, workspace, name));
+        let req = self.client.get(format!(
+            "{}/workspaces/{}/agents/{}",
+            self.base_url, workspace, name
+        ));
         let resp = self.request(req).await?;
         Ok(resp.json().await?)
     }
 
     pub async fn remove_agent(&self, workspace: &str, name: &str) -> Result<()> {
-        let req = self.client.delete(format!("{}/workspaces/{}/agents/{}", self.base_url, workspace, name));
+        let req = self.client.delete(format!(
+            "{}/workspaces/{}/agents/{}",
+            self.base_url, workspace, name
+        ));
         self.request(req).await?;
         Ok(())
     }
 
-    pub async fn update_agent(&self, workspace: &str, name: &str, instructions: &str) -> Result<()> {
-        let req = self.client
-            .put(format!("{}/workspaces/{}/agents/{}", self.base_url, workspace, name))
+    pub async fn update_agent(
+        &self,
+        workspace: &str,
+        name: &str,
+        instructions: &str,
+    ) -> Result<()> {
+        let req = self
+            .client
+            .put(format!(
+                "{}/workspaces/{}/agents/{}",
+                self.base_url, workspace, name
+            ))
             .json(&serde_json::json!({"instructions": instructions}));
         self.request(req).await?;
         Ok(())
     }
 
     pub async fn stop_agent(&self, workspace: &str, name: &str) -> Result<()> {
-        let req = self.client.post(format!("{}/workspaces/{}/agents/{}/stop", self.base_url, workspace, name));
+        let req = self.client.post(format!(
+            "{}/workspaces/{}/agents/{}/stop",
+            self.base_url, workspace, name
+        ));
         self.request(req).await?;
         Ok(())
     }
 
     pub async fn start_agent(&self, workspace: &str, name: &str) -> Result<()> {
-        let req = self.client.post(format!("{}/workspaces/{}/agents/{}/start", self.base_url, workspace, name));
+        let req = self.client.post(format!(
+            "{}/workspaces/{}/agents/{}/start",
+            self.base_url, workspace, name
+        ));
         self.request(req).await?;
         Ok(())
     }
 
-    pub async fn agent_logs(&self, workspace: &str, name: &str) -> Result<Vec<crate::db::InboxMessage>> {
-        let req = self.client.get(format!("{}/workspaces/{}/agents/{}/logs", self.base_url, workspace, name));
+    pub async fn agent_logs(
+        &self,
+        workspace: &str,
+        name: &str,
+    ) -> Result<Vec<crate::db::InboxMessage>> {
+        let req = self.client.get(format!(
+            "{}/workspaces/{}/agents/{}/logs",
+            self.base_url, workspace, name
+        ));
         let resp = self.request(req).await?;
         let body: InboxResponse = resp.json().await?;
         Ok(body.messages)
@@ -147,24 +190,51 @@ impl BhClient {
 
     // --- Inbox (workspace-scoped) ---
 
-    pub async fn send_message(&self, workspace: &str, to: &str, thread_id: &str, from: &str, msg_type: &str, content: Option<&serde_json::Value>) -> Result<()> {
+    pub async fn send_message(
+        &self,
+        workspace: &str,
+        to: &str,
+        thread_id: &str,
+        from: &str,
+        msg_type: &str,
+        content: Option<&serde_json::Value>,
+    ) -> Result<()> {
         let mut body = serde_json::json!({"thread_id": thread_id, "from": from, "type": msg_type});
         if let Some(c) = content {
             body["content"] = c.clone();
         }
-        let req = self.client
-            .post(format!("{}/workspaces/{}/agents/{}/inbox", self.base_url, workspace, to))
+        let req = self
+            .client
+            .post(format!(
+                "{}/workspaces/{}/agents/{}/inbox",
+                self.base_url, workspace, to
+            ))
             .json(&body);
         self.request(req).await?;
         Ok(())
     }
 
-    pub async fn get_inbox(&self, workspace: &str, agent_name: &str, status: Option<&str>, timeout: Option<f64>) -> Result<Vec<crate::db::InboxMessage>> {
-        let mut url = format!("{}/workspaces/{}/agents/{}/inbox", self.base_url, workspace, agent_name);
+    pub async fn get_inbox(
+        &self,
+        workspace: &str,
+        agent_name: &str,
+        status: Option<&str>,
+        timeout: Option<f64>,
+    ) -> Result<Vec<crate::db::InboxMessage>> {
+        let mut url = format!(
+            "{}/workspaces/{}/agents/{}/inbox",
+            self.base_url, workspace, agent_name
+        );
         let mut params = vec![];
-        if let Some(s) = status { params.push(format!("status={}", s)); }
-        if let Some(t) = timeout { params.push(format!("timeout={}", t)); }
-        if !params.is_empty() { url = format!("{}?{}", url, params.join("&")); }
+        if let Some(s) = status {
+            params.push(format!("status={}", s));
+        }
+        if let Some(t) = timeout {
+            params.push(format!("timeout={}", t));
+        }
+        if !params.is_empty() {
+            url = format!("{}?{}", url, params.join("&"));
+        }
 
         let req = self.client.get(&url);
         let resp = self.request(req).await?;
@@ -173,7 +243,10 @@ impl BhClient {
     }
 
     pub async fn ack_message(&self, workspace: &str, message_id: &str) -> Result<()> {
-        let req = self.client.post(format!("{}/workspaces/{}/inbox/{}/ack", self.base_url, workspace, message_id));
+        let req = self.client.post(format!(
+            "{}/workspaces/{}/inbox/{}/ack",
+            self.base_url, workspace, message_id
+        ));
         self.request(req).await?;
         Ok(())
     }
@@ -181,7 +254,8 @@ impl BhClient {
     // --- Machines (global) ---
 
     pub async fn register_machine(&self, id: &str) -> Result<crate::db::Machine> {
-        let req = self.client
+        let req = self
+            .client
             .post(format!("{}/machines", self.base_url))
             .json(&serde_json::json!({"id": id}));
         let resp = self.request(req).await?;
@@ -196,8 +270,13 @@ impl BhClient {
     }
 
     /// Get all active agents on a machine across all workspaces (for daemon use).
-    pub async fn machine_agents(&self, machine_id: &str) -> Result<Vec<(String, crate::db::Agent)>> {
-        let req = self.client.get(format!("{}/machines/{}/agents", self.base_url, machine_id));
+    pub async fn machine_agents(
+        &self,
+        machine_id: &str,
+    ) -> Result<Vec<(String, crate::db::Agent)>> {
+        let req = self
+            .client
+            .get(format!("{}/machines/{}/agents", self.base_url, machine_id));
         let resp = self.request(req).await?;
         let body: serde_json::Value = resp.json().await?;
         let items = body["agents"].as_array().cloned().unwrap_or_default();
@@ -212,16 +291,27 @@ impl BhClient {
     }
 
     pub async fn heartbeat_machine(&self, id: &str) -> Result<()> {
-        let req = self.client.post(format!("{}/machines/{}/heartbeat", self.base_url, id));
+        let req = self
+            .client
+            .post(format!("{}/machines/{}/heartbeat", self.base_url, id));
         self.request(req).await?;
         Ok(())
     }
 
     /// Long-poll for unread messages across all agents on this machine.
     /// Server holds the connection up to `timeout` seconds.
-    pub async fn poll_machine(&self, machine_id: &str, timeout: f64) -> Result<Vec<crate::db::MachineInboxMessage>> {
-        let url = format!("{}/machines/{}/poll?timeout={}", self.base_url, machine_id, timeout);
-        let req = self.client.get(&url)
+    pub async fn poll_machine(
+        &self,
+        machine_id: &str,
+        timeout: f64,
+    ) -> Result<Vec<crate::db::MachineInboxMessage>> {
+        let url = format!(
+            "{}/machines/{}/poll?timeout={}",
+            self.base_url, machine_id, timeout
+        );
+        let req = self
+            .client
+            .get(&url)
             .timeout(std::time::Duration::from_secs_f64(timeout + 5.0));
         let resp = self.request(req).await?;
         let body: MachineInboxResponse = resp.json().await?;
@@ -231,7 +321,8 @@ impl BhClient {
     // --- Workspaces ---
 
     pub async fn create_workspace(&self, name: &str) -> Result<crate::db::Workspace> {
-        let req = self.client
+        let req = self
+            .client
             .post(format!("{}/workspaces", self.base_url))
             .json(&serde_json::json!({"name": name}));
         let resp = self.request(req).await?;
@@ -246,7 +337,10 @@ impl BhClient {
     }
 
     pub async fn add_workspace_member(&self, workspace: &str, user_id: &str) -> Result<()> {
-        let req = self.client.post(format!("{}/workspaces/{}/members/{}", self.base_url, workspace, user_id));
+        let req = self.client.post(format!(
+            "{}/workspaces/{}/members/{}",
+            self.base_url, workspace, user_id
+        ));
         self.request(req).await?;
         Ok(())
     }
@@ -254,7 +348,8 @@ impl BhClient {
     // --- Users ---
 
     pub async fn invite_user(&self, name: &str) -> Result<InviteResponse> {
-        let req = self.client
+        let req = self
+            .client
             .post(format!("{}/users/invite", self.base_url))
             .json(&serde_json::json!({"name": name}));
         let resp = self.request(req).await?;
@@ -263,8 +358,15 @@ impl BhClient {
 
     // --- Cron Jobs ---
 
-    pub async fn create_cron_job(&self, workspace: &str, agent: &str, schedule: &str, task: &str) -> Result<crate::db::CronJob> {
-        let req = self.client
+    pub async fn create_cron_job(
+        &self,
+        workspace: &str,
+        agent: &str,
+        schedule: &str,
+        task: &str,
+    ) -> Result<crate::db::CronJob> {
+        let req = self
+            .client
             .post(format!("{}/workspaces/{}/cron", self.base_url, workspace))
             .json(&serde_json::json!({"agent": agent, "schedule": schedule, "task": task}));
         let resp = self.request(req).await?;
@@ -272,21 +374,35 @@ impl BhClient {
     }
 
     pub async fn list_cron_jobs(&self, workspace: &str) -> Result<Vec<crate::db::CronJob>> {
-        let req = self.client.get(format!("{}/workspaces/{}/cron", self.base_url, workspace));
+        let req = self
+            .client
+            .get(format!("{}/workspaces/{}/cron", self.base_url, workspace));
         let resp = self.request(req).await?;
         let body: serde_json::Value = resp.json().await?;
         Ok(serde_json::from_value(body["cron_jobs"].clone()).unwrap_or_default())
     }
 
     pub async fn remove_cron_job(&self, workspace: &str, cron_id: &str) -> Result<()> {
-        let req = self.client.delete(format!("{}/workspaces/{}/cron/{}", self.base_url, workspace, cron_id));
+        let req = self.client.delete(format!(
+            "{}/workspaces/{}/cron/{}",
+            self.base_url, workspace, cron_id
+        ));
         self.request(req).await?;
         Ok(())
     }
 
-    pub async fn set_cron_enabled(&self, workspace: &str, cron_id: &str, enabled: bool) -> Result<()> {
-        let req = self.client
-            .put(format!("{}/workspaces/{}/cron/{}", self.base_url, workspace, cron_id))
+    pub async fn set_cron_enabled(
+        &self,
+        workspace: &str,
+        cron_id: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        let req = self
+            .client
+            .put(format!(
+                "{}/workspaces/{}/cron/{}",
+                self.base_url, workspace, cron_id
+            ))
             .json(&serde_json::json!({"enabled": enabled}));
         self.request(req).await?;
         Ok(())
@@ -294,8 +410,16 @@ impl BhClient {
 
     // --- Threads ---
 
-    pub async fn list_threads(&self, workspace: &str, from_id: &str, limit: i64) -> Result<Vec<crate::db::ThreadSummary>> {
-        let req = self.client.get(format!("{}/workspaces/{}/threads?from_id={}&limit={}", self.base_url, workspace, from_id, limit));
+    pub async fn list_threads(
+        &self,
+        workspace: &str,
+        from_id: &str,
+        limit: i64,
+    ) -> Result<Vec<crate::db::ThreadSummary>> {
+        let req = self.client.get(format!(
+            "{}/workspaces/{}/threads?from_id={}&limit={}",
+            self.base_url, workspace, from_id, limit
+        ));
         let resp = self.request(req).await?;
         let body: serde_json::Value = resp.json().await?;
         Ok(serde_json::from_value(body["threads"].clone()).unwrap_or_default())
@@ -304,15 +428,23 @@ impl BhClient {
     // --- Tasks ---
 
     pub async fn create_task(&self, workspace: &str, title: &str) -> Result<crate::db::Task> {
-        let req = self.client
+        let req = self
+            .client
             .post(format!("{}/workspaces/{}/tasks", self.base_url, workspace))
             .json(&serde_json::json!({"title": title}));
         let resp = self.request(req).await?;
         Ok(resp.json().await?)
     }
 
-    pub async fn get_agent_for_thread(&self, workspace: &str, thread_id: &str) -> Result<Option<String>> {
-        let req = self.client.get(format!("{}/workspaces/{}/threads/{}", self.base_url, workspace, thread_id));
+    pub async fn get_agent_for_thread(
+        &self,
+        workspace: &str,
+        thread_id: &str,
+    ) -> Result<Option<String>> {
+        let req = self.client.get(format!(
+            "{}/workspaces/{}/threads/{}",
+            self.base_url, workspace, thread_id
+        ));
         let resp = self.request(req).await?;
         let body: serde_json::Value = resp.json().await?;
         let messages = body["messages"].as_array();
@@ -329,7 +461,9 @@ impl BhClient {
     }
 
     pub async fn list_tasks(&self, workspace: &str) -> Result<Vec<crate::db::Task>> {
-        let req = self.client.get(format!("{}/workspaces/{}/tasks", self.base_url, workspace));
+        let req = self
+            .client
+            .get(format!("{}/workspaces/{}/tasks", self.base_url, workspace));
         let resp = self.request(req).await?;
         let body: serde_json::Value = resp.json().await?;
         Ok(serde_json::from_value(body["tasks"].clone()).unwrap_or_default())

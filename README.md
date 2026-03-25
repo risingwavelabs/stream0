@@ -92,6 +92,27 @@ b0 server
 
 On first start, Box0 creates an admin account and prints your API key.
 
+### Frontend development
+
+The server now prefers `frontend/dist` when it exists, and falls back to the legacy `web/` dashboard otherwise.
+
+For day-to-day frontend development, run Vite separately:
+
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
+
+Vite proxies `/workspaces`, `/machines`, and `/users` to `http://127.0.0.1:8080` by default. To point it at a different backend, set `B0_FRONTEND_BACKEND_URL`.
+
+To let the Rust server serve the Vue app directly, build the frontend first:
+
+```bash
+cd frontend
+pnpm build
+```
+
 ### 3. Teach your agent to use Box0
 
 For Claude Code:
@@ -176,6 +197,7 @@ These are the commands you run. Everything else is handled by your agent automat
 - [Multi-machine setup](docs/multi-machine.md) — distribute workers across machines
 - [Teams](docs/teams.md) — share a Box0 server with multiple users
 - [Architecture](docs/architecture.md) — task flow, data model, and detailed diagrams
+- [Workflows](docs/workflows.md) — agent-first DAG workflow design for Box0
 - [CLI reference](docs/cli.md) — full command reference including agent-facing commands
 
 ## Web dashboard

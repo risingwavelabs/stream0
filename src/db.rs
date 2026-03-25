@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use uuid::Uuid;
@@ -86,6 +86,14 @@ pub struct ThreadSummary {
     pub last_activity: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentThreadSummary {
+    pub thread_id: String,
+    pub first_content: String,
+    pub latest_type: String,
+    pub latest_at: DateTime<Utc>,
+}
+
 fn default_kind() -> String {
     "normal".to_string()
 }
@@ -106,6 +114,112 @@ pub struct Task {
     pub result: Option<String>,
     pub created_by: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Workflow {
+    pub id: String,
+    pub workspace_name: String,
+    pub name: String,
+    pub description: String,
+    pub status: String,
+    pub created_by: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowNode {
+    pub id: String,
+    pub workflow_id: String,
+    pub kind: String,
+    pub title: String,
+    pub prompt: String,
+    pub agent_name: Option<String>,
+    pub position_x: f64,
+    pub position_y: f64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowEdge {
+    pub id: String,
+    pub workflow_id: String,
+    pub source_node_id: String,
+    pub target_node_id: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowDefinition {
+    pub workflow: Workflow,
+    pub nodes: Vec<WorkflowNode>,
+    pub edges: Vec<WorkflowEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowSummary {
+    pub id: String,
+    pub workspace_name: String,
+    pub name: String,
+    pub description: String,
+    pub status: String,
+    pub node_count: i64,
+    pub agent_count: i64,
+    pub created_by: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowRun {
+    pub id: String,
+    pub workflow_id: String,
+    pub workspace_name: String,
+    pub status: String,
+    pub input: Option<String>,
+    pub started_by: String,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowStepRun {
+    pub id: String,
+    pub workflow_run_id: String,
+    pub node_id: String,
+    pub node_kind: String,
+    pub node_title: String,
+    pub node_prompt: String,
+    pub agent_name: Option<String>,
+    pub thread_id: Option<String>,
+    pub status: String,
+    pub input: Option<String>,
+    pub output: Option<String>,
+    pub error: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkflowNodeDraft {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub prompt: String,
+    pub agent_name: Option<String>,
+    pub position_x: f64,
+    pub position_y: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkflowEdgeDraft {
+    pub id: String,
+    pub source_node_id: String,
+    pub target_node_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,12 +347,87 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS idx_tasks_workspace_status ON tasks(workspace_name, status);
             CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_task_id);
+
+            CREATE TABLE IF NOT EXISTS workflows (
+                id TEXT PRIMARY KEY,
+                workspace_name TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'draft',
+                created_by TEXT NOT NULL,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_workflows_workspace_status ON workflows(workspace_name, status);
+
+            CREATE TABLE IF NOT EXISTS workflow_nodes (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                prompt TEXT NOT NULL DEFAULT '',
+                agent_name TEXT,
+                position_x REAL NOT NULL DEFAULT 0,
+                position_y REAL NOT NULL DEFAULT 0,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_workflow_nodes_workflow ON workflow_nodes(workflow_id);
+
+            CREATE TABLE IF NOT EXISTS workflow_edges (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                source_node_id TEXT NOT NULL,
+                target_node_id TEXT NOT NULL,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                UNIQUE(workflow_id, source_node_id, target_node_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_workflow_edges_workflow ON workflow_edges(workflow_id);
+
+            CREATE TABLE IF NOT EXISTS workflow_runs (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                workspace_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                input TEXT,
+                started_by TEXT NOT NULL,
+                started_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                finished_at TEXT,
+                error TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_workflow_runs_workspace_workflow ON workflow_runs(workspace_name, workflow_id, started_at);
+
+            CREATE TABLE IF NOT EXISTS workflow_step_runs (
+                id TEXT PRIMARY KEY,
+                workflow_run_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                node_kind TEXT NOT NULL,
+                node_title TEXT NOT NULL,
+                node_prompt TEXT NOT NULL DEFAULT '',
+                agent_name TEXT,
+                thread_id TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                input TEXT,
+                output TEXT,
+                error TEXT,
+                started_at TEXT,
+                finished_at TEXT,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_workflow_step_runs_run ON workflow_step_runs(workflow_run_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_step_runs_thread_id ON workflow_step_runs(thread_id);
             ",
         )?;
 
         // Migrations for existing databases
-        let _ = conn.execute("ALTER TABLE agents ADD COLUMN timeout INTEGER NOT NULL DEFAULT 300", []);
-        let _ = conn.execute("ALTER TABLE agents ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal'", []);
+        let _ = conn.execute(
+            "ALTER TABLE agents ADD COLUMN timeout INTEGER NOT NULL DEFAULT 300",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE agents ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal'",
+            [],
+        );
         // Migrate old temp column to kind
         let _ = conn.execute("UPDATE agents SET kind = 'temp' WHERE temp = 1", []);
 
@@ -257,6 +446,10 @@ impl Database {
                     .map(|ndt| ndt.and_utc())
             })
             .unwrap_or_else(|_| Utc::now())
+    }
+
+    fn parse_optional_ts(value: Option<String>) -> Option<DateTime<Utc>> {
+        value.as_deref().map(Self::parse_ts)
     }
 
     // --- Users ---
@@ -331,9 +524,8 @@ impl Database {
 
     pub fn list_users(&self) -> Result<Vec<User>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, name, is_admin, created_at FROM users ORDER BY created_at ASC",
-        )?;
+        let mut stmt = conn
+            .prepare("SELECT id, name, is_admin, created_at FROM users ORDER BY created_at ASC")?;
         let users = stmt
             .query_map([], |row| {
                 let ts: String = row.get(3)?;
@@ -352,11 +544,9 @@ impl Database {
     pub fn bootstrap_admin(&self) -> Result<Option<(User, String)>> {
         let conn = self.conn.lock().unwrap();
         let has_admin: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM users WHERE is_admin = 1",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
+            .query_row("SELECT COUNT(*) FROM users WHERE is_admin = 1", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .map(|c| c > 0)?;
 
         if has_admin {
@@ -480,8 +670,10 @@ impl Database {
         let mut query =
             "SELECT id, thread_id, from_id, to_id, type, content, status, created_at FROM inbox_messages WHERE workspace_name = ?1 AND to_id = ?2"
                 .to_string();
-        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
-            vec![Box::new(workspace_name.to_string()), Box::new(to_id.to_string())];
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+            Box::new(workspace_name.to_string()),
+            Box::new(to_id.to_string()),
+        ];
         let mut param_idx = 3;
 
         if let Some(s) = status {
@@ -576,9 +768,8 @@ impl Database {
 
     pub fn list_machines(&self) -> Result<Vec<Machine>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, owner, status, last_heartbeat FROM machines ORDER BY id ASC",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, owner, status, last_heartbeat FROM machines ORDER BY id ASC")?;
         let machines = stmt
             .query_map([], |row| {
                 let hb: Option<String> = row.get(3)?;
@@ -685,7 +876,10 @@ impl Database {
     pub fn get_agent(&self, workspace_name: &str, name: &str) -> Result<Option<Agent>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            &format!("SELECT {} FROM agents WHERE workspace_name = ?1 AND name = ?2", Self::AGENT_COLS),
+            &format!(
+                "SELECT {} FROM agents WHERE workspace_name = ?1 AND name = ?2",
+                Self::AGENT_COLS
+            ),
             params![workspace_name, name],
             Self::parse_agent_row,
         )
@@ -693,12 +887,7 @@ impl Database {
         .map_err(Into::into)
     }
 
-    pub fn remove_agent(
-        &self,
-        workspace_name: &str,
-        name: &str,
-        user_id: &str,
-    ) -> Result<()> {
+    pub fn remove_agent(&self, workspace_name: &str, name: &str, user_id: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
 
         if !user_id.is_empty() {
@@ -861,7 +1050,11 @@ impl Database {
                     created_at: Database::parse_ts(&ts),
                     agent_instructions: row.get(9)?,
                     agent_runtime: row.get(10)?,
-                    agent_timeout: if timeout_i > 0 { Some(timeout_i as u64) } else { None },
+                    agent_timeout: if timeout_i > 0 {
+                        Some(timeout_i as u64)
+                    } else {
+                        None
+                    },
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -1026,7 +1219,11 @@ impl Database {
         Ok(tasks)
     }
 
-    pub fn get_task_by_thread(&self, workspace_name: &str, thread_id: &str) -> Result<Option<Task>> {
+    pub fn get_task_by_thread(
+        &self,
+        workspace_name: &str,
+        thread_id: &str,
+    ) -> Result<Option<Task>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT id, workspace_name, title, status, agent_name, thread_id, parent_task_id, result, created_by, created_at FROM tasks WHERE workspace_name = ?1 AND thread_id = ?2",
@@ -1052,7 +1249,11 @@ impl Database {
     }
 
     /// Look up the agent name for a thread by finding the first request message's recipient.
-    pub fn get_agent_for_thread(&self, workspace_name: &str, thread_id: &str) -> Result<Option<String>> {
+    pub fn get_agent_for_thread(
+        &self,
+        workspace_name: &str,
+        thread_id: &str,
+    ) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT to_id FROM inbox_messages WHERE workspace_name = ?1 AND thread_id = ?2 AND type = 'request' ORDER BY created_at ASC LIMIT 1",
@@ -1095,6 +1296,49 @@ impl Database {
                         .and_then(|v| v.as_str().map(|s| s.to_string()))
                         .unwrap_or_default(),
                     last_activity: Database::parse_ts(&ts),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(threads)
+    }
+
+    pub fn list_agent_threads(
+        &self,
+        workspace_name: &str,
+        agent_name: &str,
+        limit: i64,
+    ) -> Result<Vec<AgentThreadSummary>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT m.thread_id,
+                    (SELECT content FROM inbox_messages
+                     WHERE workspace_name = ?1 AND thread_id = m.thread_id AND type = 'request'
+                     ORDER BY created_at ASC LIMIT 1),
+                    (SELECT type FROM inbox_messages
+                     WHERE workspace_name = ?1 AND thread_id = m.thread_id
+                     ORDER BY created_at DESC LIMIT 1),
+                    MAX(m.created_at)
+             FROM inbox_messages m
+             WHERE m.workspace_name = ?1 AND m.to_id = ?2 AND m.type = 'request'
+             GROUP BY m.thread_id
+             ORDER BY MAX(m.created_at) DESC
+             LIMIT ?3",
+        )?;
+        let threads = stmt
+            .query_map(params![workspace_name, agent_name, limit], |row| {
+                let first_content_str: Option<String> = row.get(1)?;
+                let latest_at: String = row.get(3)?;
+                Ok(AgentThreadSummary {
+                    thread_id: row.get(0)?,
+                    first_content: first_content_str
+                        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                        .map(|v| match v {
+                            serde_json::Value::String(s) => s,
+                            other => other.to_string(),
+                        })
+                        .unwrap_or_default(),
+                    latest_type: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                    latest_at: Database::parse_ts(&latest_at),
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -1197,7 +1441,12 @@ impl Database {
         Ok(jobs)
     }
 
-    pub fn remove_cron_job(&self, workspace_name: &str, cron_id: &str, user_id: &str) -> Result<()> {
+    pub fn remove_cron_job(
+        &self,
+        workspace_name: &str,
+        cron_id: &str,
+        user_id: &str,
+    ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let creator: Option<String> = conn
             .query_row(
@@ -1218,7 +1467,12 @@ impl Database {
         Ok(())
     }
 
-    pub fn set_cron_enabled(&self, workspace_name: &str, cron_id: &str, enabled: bool) -> Result<()> {
+    pub fn set_cron_enabled(
+        &self,
+        workspace_name: &str,
+        cron_id: &str,
+        enabled: bool,
+    ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE cron_jobs SET enabled = ?1 WHERE id = ?2 AND workspace_name = ?3",
@@ -1233,6 +1487,675 @@ impl Database {
         conn.execute(
             "UPDATE cron_jobs SET last_run = ?1 WHERE id = ?2",
             params![now, cron_id],
+        )?;
+        Ok(())
+    }
+
+    // --- Workflows ---
+
+    fn parse_workflow_row(row: &rusqlite::Row) -> rusqlite::Result<Workflow> {
+        let created_at: String = row.get(6)?;
+        let updated_at: String = row.get(7)?;
+        Ok(Workflow {
+            id: row.get(0)?,
+            workspace_name: row.get(1)?,
+            name: row.get(2)?,
+            description: row.get(3)?,
+            status: row.get(4)?,
+            created_by: row.get(5)?,
+            created_at: Database::parse_ts(&created_at),
+            updated_at: Database::parse_ts(&updated_at),
+        })
+    }
+
+    fn parse_workflow_node_row(row: &rusqlite::Row) -> rusqlite::Result<WorkflowNode> {
+        let created_at: String = row.get(8)?;
+        let updated_at: String = row.get(9)?;
+        Ok(WorkflowNode {
+            id: row.get(0)?,
+            workflow_id: row.get(1)?,
+            kind: row.get(2)?,
+            title: row.get(3)?,
+            prompt: row.get(4)?,
+            agent_name: row.get(5)?,
+            position_x: row.get(6)?,
+            position_y: row.get(7)?,
+            created_at: Database::parse_ts(&created_at),
+            updated_at: Database::parse_ts(&updated_at),
+        })
+    }
+
+    fn parse_workflow_edge_row(row: &rusqlite::Row) -> rusqlite::Result<WorkflowEdge> {
+        let created_at: String = row.get(4)?;
+        Ok(WorkflowEdge {
+            id: row.get(0)?,
+            workflow_id: row.get(1)?,
+            source_node_id: row.get(2)?,
+            target_node_id: row.get(3)?,
+            created_at: Database::parse_ts(&created_at),
+        })
+    }
+
+    fn parse_workflow_run_row(row: &rusqlite::Row) -> rusqlite::Result<WorkflowRun> {
+        let started_at: String = row.get(6)?;
+        let finished_at: Option<String> = row.get(7)?;
+        Ok(WorkflowRun {
+            id: row.get(0)?,
+            workflow_id: row.get(1)?,
+            workspace_name: row.get(2)?,
+            status: row.get(3)?,
+            input: row.get(4)?,
+            started_by: row.get(5)?,
+            started_at: Database::parse_ts(&started_at),
+            finished_at: Database::parse_optional_ts(finished_at),
+            error: row.get(8)?,
+        })
+    }
+
+    fn parse_workflow_step_run_row(row: &rusqlite::Row) -> rusqlite::Result<WorkflowStepRun> {
+        let started_at: Option<String> = row.get(12)?;
+        let finished_at: Option<String> = row.get(13)?;
+        let created_at: String = row.get(14)?;
+        Ok(WorkflowStepRun {
+            id: row.get(0)?,
+            workflow_run_id: row.get(1)?,
+            node_id: row.get(2)?,
+            node_kind: row.get(3)?,
+            node_title: row.get(4)?,
+            node_prompt: row.get(5)?,
+            agent_name: row.get(6)?,
+            thread_id: row.get(7)?,
+            status: row.get(8)?,
+            input: row.get(9)?,
+            output: row.get(10)?,
+            error: row.get(11)?,
+            started_at: Database::parse_optional_ts(started_at),
+            finished_at: Database::parse_optional_ts(finished_at),
+            created_at: Database::parse_ts(&created_at),
+        })
+    }
+
+    pub fn create_workflow(
+        &self,
+        workspace_name: &str,
+        name: &str,
+        description: &str,
+        status: &str,
+        created_by: &str,
+        nodes: &[WorkflowNodeDraft],
+        edges: &[WorkflowEdgeDraft],
+    ) -> Result<Workflow> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let workflow_id = format!("wf-{}", &Uuid::new_v4().to_string()[..8]);
+
+        tx.execute(
+            "INSERT INTO workflows (id, workspace_name, name, description, status, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![workflow_id, workspace_name, name, description, status, created_by],
+        )?;
+
+        for node in nodes {
+            tx.execute(
+                "INSERT INTO workflow_nodes (id, workflow_id, kind, title, prompt, agent_name, position_x, position_y) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    node.id,
+                    workflow_id,
+                    node.kind,
+                    node.title,
+                    node.prompt,
+                    node.agent_name,
+                    node.position_x,
+                    node.position_y,
+                ],
+            )?;
+        }
+
+        for edge in edges {
+            tx.execute(
+                "INSERT INTO workflow_edges (id, workflow_id, source_node_id, target_node_id) VALUES (?1, ?2, ?3, ?4)",
+                params![edge.id, workflow_id, edge.source_node_id, edge.target_node_id],
+            )?;
+        }
+
+        let row = tx.query_row(
+            "SELECT id, workspace_name, name, description, status, created_by, created_at, updated_at FROM workflows WHERE id = ?1",
+            params![workflow_id],
+            Self::parse_workflow_row,
+        )?;
+        tx.commit()?;
+        Ok(row)
+    }
+
+    pub fn list_workflows(&self, workspace_name: &str) -> Result<Vec<WorkflowSummary>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT w.id, w.workspace_name, w.name, w.description, w.status,
+                    (SELECT COUNT(*) FROM workflow_nodes n WHERE n.workflow_id = w.id),
+                    (SELECT COUNT(DISTINCT n.agent_name) FROM workflow_nodes n WHERE n.workflow_id = w.id AND n.agent_name IS NOT NULL),
+                    w.created_by, w.created_at, w.updated_at
+             FROM workflows w
+             WHERE w.workspace_name = ?1
+             ORDER BY w.updated_at DESC, w.created_at DESC",
+        )?;
+        let workflows = stmt
+            .query_map(params![workspace_name], |row| {
+                let created_at: String = row.get(8)?;
+                let updated_at: String = row.get(9)?;
+                Ok(WorkflowSummary {
+                    id: row.get(0)?,
+                    workspace_name: row.get(1)?,
+                    name: row.get(2)?,
+                    description: row.get(3)?,
+                    status: row.get(4)?,
+                    node_count: row.get(5)?,
+                    agent_count: row.get(6)?,
+                    created_by: row.get(7)?,
+                    created_at: Database::parse_ts(&created_at),
+                    updated_at: Database::parse_ts(&updated_at),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(workflows)
+    }
+
+    pub fn get_workflow(
+        &self,
+        workspace_name: &str,
+        workflow_id: &str,
+    ) -> Result<Option<Workflow>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, workspace_name, name, description, status, created_by, created_at, updated_at
+             FROM workflows WHERE workspace_name = ?1 AND id = ?2",
+            params![workspace_name, workflow_id],
+            Self::parse_workflow_row,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn get_workflow_definition(
+        &self,
+        workspace_name: &str,
+        workflow_id: &str,
+    ) -> Result<Option<WorkflowDefinition>> {
+        let conn = self.conn.lock().unwrap();
+        let workflow = conn
+            .query_row(
+                "SELECT id, workspace_name, name, description, status, created_by, created_at, updated_at
+                 FROM workflows WHERE workspace_name = ?1 AND id = ?2",
+                params![workspace_name, workflow_id],
+                Self::parse_workflow_row,
+            )
+            .optional()?;
+
+        let Some(workflow) = workflow else {
+            return Ok(None);
+        };
+
+        let mut node_stmt = conn.prepare(
+            "SELECT id, workflow_id, kind, title, prompt, agent_name, position_x, position_y, created_at, updated_at
+             FROM workflow_nodes WHERE workflow_id = ?1 ORDER BY created_at ASC",
+        )?;
+        let nodes = node_stmt
+            .query_map(params![workflow_id], Self::parse_workflow_node_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let mut edge_stmt = conn.prepare(
+            "SELECT id, workflow_id, source_node_id, target_node_id, created_at
+             FROM workflow_edges WHERE workflow_id = ?1 ORDER BY created_at ASC",
+        )?;
+        let edges = edge_stmt
+            .query_map(params![workflow_id], Self::parse_workflow_edge_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(Some(WorkflowDefinition {
+            workflow,
+            nodes,
+            edges,
+        }))
+    }
+
+    pub fn update_workflow(
+        &self,
+        workspace_name: &str,
+        workflow_id: &str,
+        name: &str,
+        description: &str,
+        status: &str,
+        user_id: &str,
+        nodes: &[WorkflowNodeDraft],
+        edges: &[WorkflowEdgeDraft],
+    ) -> Result<Workflow> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+
+        if !user_id.is_empty() {
+            let owner: String = tx
+                .query_row(
+                    "SELECT created_by FROM workflows WHERE workspace_name = ?1 AND id = ?2",
+                    params![workspace_name, workflow_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or_else(|| anyhow::anyhow!("workflow not found"))?;
+            if owner != user_id {
+                anyhow::bail!("permission denied: workflow was created by someone else");
+            }
+        }
+
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let updated = tx.execute(
+            "UPDATE workflows
+             SET name = ?3, description = ?4, status = ?5, updated_at = ?6
+             WHERE workspace_name = ?1 AND id = ?2",
+            params![workspace_name, workflow_id, name, description, status, now],
+        )?;
+        if updated == 0 {
+            anyhow::bail!("workflow not found");
+        }
+
+        tx.execute(
+            "DELETE FROM workflow_edges WHERE workflow_id = ?1",
+            params![workflow_id],
+        )?;
+        tx.execute(
+            "DELETE FROM workflow_nodes WHERE workflow_id = ?1",
+            params![workflow_id],
+        )?;
+
+        for node in nodes {
+            tx.execute(
+                "INSERT INTO workflow_nodes (id, workflow_id, kind, title, prompt, agent_name, position_x, position_y, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
+                params![
+                    node.id,
+                    workflow_id,
+                    node.kind,
+                    node.title,
+                    node.prompt,
+                    node.agent_name,
+                    node.position_x,
+                    node.position_y,
+                    now,
+                ],
+            )?;
+        }
+
+        for edge in edges {
+            tx.execute(
+                "INSERT INTO workflow_edges (id, workflow_id, source_node_id, target_node_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![edge.id, workflow_id, edge.source_node_id, edge.target_node_id, now],
+            )?;
+        }
+
+        let workflow = tx.query_row(
+            "SELECT id, workspace_name, name, description, status, created_by, created_at, updated_at
+             FROM workflows WHERE workspace_name = ?1 AND id = ?2",
+            params![workspace_name, workflow_id],
+            Self::parse_workflow_row,
+        )?;
+        tx.commit()?;
+        Ok(workflow)
+    }
+
+    pub fn set_workflow_status(
+        &self,
+        workspace_name: &str,
+        workflow_id: &str,
+        status: &str,
+        user_id: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+
+        if !user_id.is_empty() {
+            let owner: String = conn
+                .query_row(
+                    "SELECT created_by FROM workflows WHERE workspace_name = ?1 AND id = ?2",
+                    params![workspace_name, workflow_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or_else(|| anyhow::anyhow!("workflow not found"))?;
+            if owner != user_id {
+                anyhow::bail!("permission denied: workflow was created by someone else");
+            }
+        }
+
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let updated = conn.execute(
+            "UPDATE workflows SET status = ?3, updated_at = ?4 WHERE workspace_name = ?1 AND id = ?2",
+            params![workspace_name, workflow_id, status, now],
+        )?;
+        if updated == 0 {
+            anyhow::bail!("workflow not found");
+        }
+        Ok(())
+    }
+
+    pub fn remove_workflow(
+        &self,
+        workspace_name: &str,
+        workflow_id: &str,
+        user_id: &str,
+    ) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+
+        if !user_id.is_empty() {
+            let owner: String = tx
+                .query_row(
+                    "SELECT created_by FROM workflows WHERE workspace_name = ?1 AND id = ?2",
+                    params![workspace_name, workflow_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .ok_or_else(|| anyhow::anyhow!("workflow not found"))?;
+            if owner != user_id {
+                anyhow::bail!("permission denied: workflow was created by someone else");
+            }
+        }
+
+        tx.execute(
+            "DELETE FROM workflow_edges WHERE workflow_id = ?1",
+            params![workflow_id],
+        )?;
+        tx.execute(
+            "DELETE FROM workflow_nodes WHERE workflow_id = ?1",
+            params![workflow_id],
+        )?;
+        let deleted = tx.execute(
+            "DELETE FROM workflows WHERE workspace_name = ?1 AND id = ?2",
+            params![workspace_name, workflow_id],
+        )?;
+        if deleted == 0 {
+            anyhow::bail!("workflow not found");
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn create_workflow_run(
+        &self,
+        workspace_name: &str,
+        workflow_id: &str,
+        input: Option<&str>,
+        started_by: &str,
+    ) -> Result<WorkflowRun> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+
+        let workflow = tx
+            .query_row(
+                "SELECT id, workspace_name, name, description, status, created_by, created_at, updated_at
+                 FROM workflows WHERE workspace_name = ?1 AND id = ?2",
+                params![workspace_name, workflow_id],
+                Self::parse_workflow_row,
+            )
+            .optional()?
+            .ok_or_else(|| anyhow::anyhow!("workflow not found"))?;
+
+        let nodes = {
+            let mut node_stmt = tx.prepare(
+                "SELECT id, workflow_id, kind, title, prompt, agent_name, position_x, position_y, created_at, updated_at
+                 FROM workflow_nodes WHERE workflow_id = ?1 ORDER BY created_at ASC",
+            )?;
+            node_stmt
+                .query_map(params![workflow_id], Self::parse_workflow_node_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+
+        if nodes.is_empty() {
+            anyhow::bail!("workflow has no nodes");
+        }
+
+        let run_id = format!("wfr-{}", &Uuid::new_v4().to_string()[..8]);
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        tx.execute(
+            "INSERT INTO workflow_runs (id, workflow_id, workspace_name, status, input, started_by, started_at)
+             VALUES (?1, ?2, ?3, 'queued', ?4, ?5, ?6)",
+            params![run_id, workflow.id, workspace_name, input, started_by, now],
+        )?;
+
+        for node in nodes {
+            let step_id = format!("wfs-{}", &Uuid::new_v4().to_string()[..8]);
+            let is_start = node.kind == "start";
+            tx.execute(
+                "INSERT INTO workflow_step_runs
+                 (id, workflow_run_id, node_id, node_kind, node_title, node_prompt, agent_name, status, input, output, started_at, finished_at, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    step_id,
+                    run_id,
+                    node.id,
+                    node.kind,
+                    node.title,
+                    node.prompt,
+                    node.agent_name,
+                    if is_start { "done" } else { "pending" },
+                    if is_start { input } else { None::<&str> },
+                    if is_start { input } else { None::<&str> },
+                    if is_start { Some(now.as_str()) } else { None::<&str> },
+                    if is_start { Some(now.as_str()) } else { None::<&str> },
+                    now,
+                ],
+            )?;
+        }
+
+        let run = tx.query_row(
+            "SELECT id, workflow_id, workspace_name, status, input, started_by, started_at, finished_at, error
+             FROM workflow_runs WHERE id = ?1",
+            params![run_id],
+            Self::parse_workflow_run_row,
+        )?;
+
+        tx.commit()?;
+        Ok(run)
+    }
+
+    pub fn list_workflow_runs(
+        &self,
+        workspace_name: &str,
+        workflow_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<WorkflowRun>> {
+        let conn = self.conn.lock().unwrap();
+        let mut query = "SELECT id, workflow_id, workspace_name, status, input, started_by, started_at, finished_at, error
+                         FROM workflow_runs WHERE workspace_name = ?1"
+            .to_string();
+        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(workspace_name.to_string())];
+        let mut idx = 2;
+        if let Some(workflow_id) = workflow_id {
+            query += &format!(" AND workflow_id = ?{}", idx);
+            params_vec.push(Box::new(workflow_id.to_string()));
+            idx += 1;
+        }
+        query += &format!(" ORDER BY started_at DESC LIMIT ?{}", idx);
+        params_vec.push(Box::new(limit));
+        let mut stmt = conn.prepare(&query)?;
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            params_vec.iter().map(|item| item.as_ref()).collect();
+        let runs = stmt
+            .query_map(params_ref.as_slice(), Self::parse_workflow_run_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(runs)
+    }
+
+    pub fn get_workflow_run(
+        &self,
+        workspace_name: &str,
+        run_id: &str,
+    ) -> Result<Option<WorkflowRun>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, workflow_id, workspace_name, status, input, started_by, started_at, finished_at, error
+             FROM workflow_runs WHERE workspace_name = ?1 AND id = ?2",
+            params![workspace_name, run_id],
+            Self::parse_workflow_run_row,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn list_workflow_step_runs(&self, run_id: &str) -> Result<Vec<WorkflowStepRun>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, workflow_run_id, node_id, node_kind, node_title, node_prompt, agent_name, thread_id,
+                    status, input, output, error, started_at, finished_at, created_at
+             FROM workflow_step_runs WHERE workflow_run_id = ?1 ORDER BY created_at ASC",
+        )?;
+        let steps = stmt
+            .query_map(params![run_id], Self::parse_workflow_step_run_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(steps)
+    }
+
+    pub fn get_workflow_step_run(
+        &self,
+        run_id: &str,
+        step_run_id: &str,
+    ) -> Result<Option<WorkflowStepRun>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, workflow_run_id, node_id, node_kind, node_title, node_prompt, agent_name, thread_id,
+                    status, input, output, error, started_at, finished_at, created_at
+             FROM workflow_step_runs WHERE workflow_run_id = ?1 AND id = ?2",
+            params![run_id, step_run_id],
+            Self::parse_workflow_step_run_row,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn get_workflow_step_run_by_thread(
+        &self,
+        workspace_name: &str,
+        thread_id: &str,
+    ) -> Result<Option<WorkflowStepRun>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT s.id, s.workflow_run_id, s.node_id, s.node_kind, s.node_title, s.node_prompt, s.agent_name, s.thread_id,
+                    s.status, s.input, s.output, s.error, s.started_at, s.finished_at, s.created_at
+             FROM workflow_step_runs s
+             JOIN workflow_runs r ON r.id = s.workflow_run_id
+             WHERE r.workspace_name = ?1 AND s.thread_id = ?2",
+            params![workspace_name, thread_id],
+            Self::parse_workflow_step_run_row,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn dispatch_workflow_step_run(
+        &self,
+        run_id: &str,
+        step_run_id: &str,
+        thread_id: &str,
+        input: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        conn.execute(
+            "UPDATE workflow_step_runs
+             SET status = 'running', thread_id = ?3, input = ?4, error = NULL, output = NULL, started_at = ?5, finished_at = NULL
+             WHERE workflow_run_id = ?1 AND id = ?2",
+            params![run_id, step_run_id, thread_id, input, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_workflow_step_run_started(&self, step_run_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        conn.execute(
+            "UPDATE workflow_step_runs
+             SET status = 'running', started_at = COALESCE(started_at, ?2)
+             WHERE id = ?1",
+            params![step_run_id, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn complete_workflow_step_run(
+        &self,
+        step_run_id: &str,
+        status: &str,
+        output: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        conn.execute(
+            "UPDATE workflow_step_runs
+             SET status = ?2, output = COALESCE(?3, output), error = ?4, finished_at = ?5
+             WHERE id = ?1",
+            params![step_run_id, status, output, error, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_workflow_step_run_waiting_for_input(&self, step_run_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE workflow_step_runs SET status = 'waiting_for_input' WHERE id = ?1",
+            params![step_run_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_workflow_step_run_output(
+        &self,
+        step_run_id: &str,
+        status: &str,
+        input: Option<&str>,
+        output: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        conn.execute(
+            "UPDATE workflow_step_runs
+             SET status = ?2, input = COALESCE(?3, input), output = COALESCE(?4, output), error = NULL,
+                 started_at = COALESCE(started_at, ?5), finished_at = CASE WHEN ?2 = 'done' THEN ?5 ELSE finished_at END
+             WHERE id = ?1",
+            params![step_run_id, status, input, output, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn reset_workflow_step_runs(&self, run_id: &str, step_run_ids: &[String]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        for step_run_id in step_run_ids {
+            conn.execute(
+                "UPDATE workflow_step_runs
+                 SET status = 'pending', thread_id = NULL, input = NULL, output = NULL, error = NULL, started_at = NULL, finished_at = NULL
+                 WHERE workflow_run_id = ?1 AND id = ?2",
+                params![run_id, step_run_id],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn update_workflow_run_status(
+        &self,
+        workspace_name: &str,
+        run_id: &str,
+        status: &str,
+        error: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let finished_at = if matches!(status, "done" | "failed" | "cancelled") {
+            Some(Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        } else {
+            None
+        };
+        conn.execute(
+            "UPDATE workflow_runs
+             SET status = ?3, error = ?4, finished_at = CASE WHEN ?5 IS NULL THEN NULL ELSE ?5 END
+             WHERE workspace_name = ?1 AND id = ?2",
+            params![workspace_name, run_id, status, error, finished_at],
         )?;
         Ok(())
     }
@@ -1312,8 +2235,17 @@ mod tests {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
 
-        db.register_agent("alice", "reviewer", "Code reviewer", "Review code.", "local", "auto", &alice.id, "normal")
-            .unwrap();
+        db.register_agent(
+            "alice",
+            "reviewer",
+            "Code reviewer",
+            "Review code.",
+            "local",
+            "auto",
+            &alice.id,
+            "normal",
+        )
+        .unwrap();
 
         let agents = db.list_agents("alice").unwrap();
         assert_eq!(agents.len(), 1);
@@ -1327,8 +2259,17 @@ mod tests {
         // But visible in shared workspace
         db.create_workspace("team", &alice.id).unwrap();
         db.add_workspace_member("team", &bob.id).unwrap();
-        db.register_agent("team", "shared-reviewer", "Shared reviewer", "Review.", "local", "auto", &alice.id, "normal")
-            .unwrap();
+        db.register_agent(
+            "team",
+            "shared-reviewer",
+            "Shared reviewer",
+            "Review.",
+            "local",
+            "auto",
+            &alice.id,
+            "normal",
+        )
+        .unwrap();
 
         let team_agents = db.list_agents("team").unwrap();
         assert_eq!(team_agents.len(), 1);
@@ -1360,8 +2301,10 @@ mod tests {
         db.create_workspace("team", &alice.id).unwrap();
         db.add_workspace_member("team", &bob.id).unwrap();
 
-        db.register_agent("team", "reviewer", "Reviewer", "Review.", "local", "auto", &alice.id, "normal")
-            .unwrap();
+        db.register_agent(
+            "team", "reviewer", "Reviewer", "Review.", "local", "auto", &alice.id, "normal",
+        )
+        .unwrap();
 
         // Bob cannot remove Alice's agent
         let result = db.remove_agent("team", "reviewer", &bob.id);
@@ -1377,15 +2320,26 @@ mod tests {
         let (_alice, _) = db.create_user("alice", false).unwrap();
 
         let msg = db
-            .send_inbox_message("alice", "t1", "sender", "receiver", "request", Some(&serde_json::json!("hello")))
+            .send_inbox_message(
+                "alice",
+                "t1",
+                "sender",
+                "receiver",
+                "request",
+                Some(&serde_json::json!("hello")),
+            )
             .unwrap();
         assert_eq!(msg.msg_type, "request");
 
-        let messages = db.get_inbox_messages("alice", "receiver", Some("unread"), None).unwrap();
+        let messages = db
+            .get_inbox_messages("alice", "receiver", Some("unread"), None)
+            .unwrap();
         assert_eq!(messages.len(), 1);
 
         db.ack_inbox_message("alice", &msg.id).unwrap();
-        let messages = db.get_inbox_messages("alice", "receiver", Some("unread"), None).unwrap();
+        let messages = db
+            .get_inbox_messages("alice", "receiver", Some("unread"), None)
+            .unwrap();
         assert_eq!(messages.len(), 0);
     }
 
@@ -1394,7 +2348,16 @@ mod tests {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
 
-        let task = db.create_task("alice", "Review PR #42", "task-abc", "thread-abc", None, &alice.id).unwrap();
+        let task = db
+            .create_task(
+                "alice",
+                "Review PR #42",
+                "task-abc",
+                "thread-abc",
+                None,
+                &alice.id,
+            )
+            .unwrap();
         assert!(task.id.starts_with("task-"));
         assert_eq!(task.status, "running");
         assert_eq!(task.title, "Review PR #42");
@@ -1406,7 +2369,8 @@ mod tests {
         let tasks = db.list_tasks("alice").unwrap();
         assert_eq!(tasks.len(), 1);
 
-        db.update_task_status("alice", &task.id, "done", Some("All good")).unwrap();
+        db.update_task_status("alice", &task.id, "done", Some("All good"))
+            .unwrap();
         let updated = db.get_task("alice", &task.id).unwrap().unwrap();
         assert_eq!(updated.status, "done");
         assert_eq!(updated.result.as_deref(), Some("All good"));
@@ -1417,9 +2381,36 @@ mod tests {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
 
-        let parent = db.create_task("alice", "SEO project", "task-seo", "thread-1", None, &alice.id).unwrap();
-        let _sub1 = db.create_task("alice", "Research keywords", "worker-1", "thread-2", Some(&parent.id), &alice.id).unwrap();
-        let _sub2 = db.create_task("alice", "Write blog", "worker-2", "thread-3", Some(&parent.id), &alice.id).unwrap();
+        let parent = db
+            .create_task(
+                "alice",
+                "SEO project",
+                "task-seo",
+                "thread-1",
+                None,
+                &alice.id,
+            )
+            .unwrap();
+        let _sub1 = db
+            .create_task(
+                "alice",
+                "Research keywords",
+                "worker-1",
+                "thread-2",
+                Some(&parent.id),
+                &alice.id,
+            )
+            .unwrap();
+        let _sub2 = db
+            .create_task(
+                "alice",
+                "Write blog",
+                "worker-2",
+                "thread-3",
+                Some(&parent.id),
+                &alice.id,
+            )
+            .unwrap();
 
         let subs = db.get_subtasks("alice", &parent.id).unwrap();
         assert_eq!(subs.len(), 2);
@@ -1430,12 +2421,216 @@ mod tests {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
 
-        let task = db.create_task("alice", "Test task", "task-xyz", "thread-xyz", None, &alice.id).unwrap();
+        let task = db
+            .create_task(
+                "alice",
+                "Test task",
+                "task-xyz",
+                "thread-xyz",
+                None,
+                &alice.id,
+            )
+            .unwrap();
         let found = db.get_task_by_thread("alice", "thread-xyz").unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, task.id);
 
         let not_found = db.get_task_by_thread("alice", "thread-nope").unwrap();
         assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_workflow_crud() {
+        let db = test_db();
+        let (alice, _) = db.create_user("alice", false).unwrap();
+        db.register_agent(
+            "alice",
+            "researcher",
+            "",
+            "Research.",
+            "local",
+            "auto",
+            &alice.id,
+            "normal",
+        )
+        .unwrap();
+
+        let nodes = vec![
+            WorkflowNodeDraft {
+                id: "node-start".to_string(),
+                kind: "start".to_string(),
+                title: "Start".to_string(),
+                prompt: "".to_string(),
+                agent_name: None,
+                position_x: 0.0,
+                position_y: 0.0,
+            },
+            WorkflowNodeDraft {
+                id: "node-agent".to_string(),
+                kind: "agent".to_string(),
+                title: "Research".to_string(),
+                prompt: "Research the topic".to_string(),
+                agent_name: Some("researcher".to_string()),
+                position_x: 180.0,
+                position_y: 0.0,
+            },
+            WorkflowNodeDraft {
+                id: "node-end".to_string(),
+                kind: "end".to_string(),
+                title: "End".to_string(),
+                prompt: "".to_string(),
+                agent_name: None,
+                position_x: 360.0,
+                position_y: 0.0,
+            },
+        ];
+        let edges = vec![
+            WorkflowEdgeDraft {
+                id: "edge-1".to_string(),
+                source_node_id: "node-start".to_string(),
+                target_node_id: "node-agent".to_string(),
+            },
+            WorkflowEdgeDraft {
+                id: "edge-2".to_string(),
+                source_node_id: "node-agent".to_string(),
+                target_node_id: "node-end".to_string(),
+            },
+        ];
+
+        let workflow = db
+            .create_workflow(
+                "alice",
+                "Research flow",
+                "Draft",
+                "draft",
+                &alice.id,
+                &nodes,
+                &edges,
+            )
+            .unwrap();
+        assert!(workflow.id.starts_with("wf-"));
+
+        let list = db.list_workflows("alice").unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].node_count, 3);
+        assert_eq!(list[0].agent_count, 1);
+
+        let def = db
+            .get_workflow_definition("alice", &workflow.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(def.workflow.name, "Research flow");
+        assert_eq!(def.nodes.len(), 3);
+        assert_eq!(def.edges.len(), 2);
+
+        let updated_nodes = vec![
+            WorkflowNodeDraft {
+                id: "node-start".to_string(),
+                kind: "start".to_string(),
+                title: "Start".to_string(),
+                prompt: "".to_string(),
+                agent_name: None,
+                position_x: 0.0,
+                position_y: 0.0,
+            },
+            WorkflowNodeDraft {
+                id: "node-agent".to_string(),
+                kind: "agent".to_string(),
+                title: "Research deeply".to_string(),
+                prompt: "Research carefully".to_string(),
+                agent_name: Some("researcher".to_string()),
+                position_x: 220.0,
+                position_y: 20.0,
+            },
+        ];
+        let updated_edges = vec![WorkflowEdgeDraft {
+            id: "edge-3".to_string(),
+            source_node_id: "node-start".to_string(),
+            target_node_id: "node-agent".to_string(),
+        }];
+
+        let updated = db
+            .update_workflow(
+                "alice",
+                &workflow.id,
+                "Research flow v2",
+                "Updated",
+                "published",
+                &alice.id,
+                &updated_nodes,
+                &updated_edges,
+            )
+            .unwrap();
+        assert_eq!(updated.status, "published");
+
+        let def = db
+            .get_workflow_definition("alice", &workflow.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(def.workflow.name, "Research flow v2");
+        assert_eq!(def.nodes.len(), 2);
+        assert_eq!(def.edges.len(), 1);
+
+        db.remove_workflow("alice", &workflow.id, &alice.id)
+            .unwrap();
+        assert!(db.get_workflow("alice", &workflow.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_workflow_run_creation() {
+        let db = test_db();
+        let (alice, _) = db.create_user("alice", false).unwrap();
+        db.register_agent(
+            "alice", "reviewer", "", "Review.", "local", "auto", &alice.id, "normal",
+        )
+        .unwrap();
+
+        let workflow = db
+            .create_workflow(
+                "alice",
+                "Review flow",
+                "",
+                "draft",
+                &alice.id,
+                &[
+                    WorkflowNodeDraft {
+                        id: "start".to_string(),
+                        kind: "start".to_string(),
+                        title: "Start".to_string(),
+                        prompt: "".to_string(),
+                        agent_name: None,
+                        position_x: 0.0,
+                        position_y: 0.0,
+                    },
+                    WorkflowNodeDraft {
+                        id: "review".to_string(),
+                        kind: "agent".to_string(),
+                        title: "Review".to_string(),
+                        prompt: "Review this".to_string(),
+                        agent_name: Some("reviewer".to_string()),
+                        position_x: 100.0,
+                        position_y: 0.0,
+                    },
+                ],
+                &[WorkflowEdgeDraft {
+                    id: "edge".to_string(),
+                    source_node_id: "start".to_string(),
+                    target_node_id: "review".to_string(),
+                }],
+            )
+            .unwrap();
+
+        let run = db
+            .create_workflow_run("alice", &workflow.id, Some("Look at PR #1"), &alice.id)
+            .unwrap();
+        assert_eq!(run.status, "queued");
+
+        let steps = db.list_workflow_step_runs(&run.id).unwrap();
+        assert_eq!(steps.len(), 2);
+        let start = steps.iter().find(|step| step.node_id == "start").unwrap();
+        let review = steps.iter().find(|step| step.node_id == "review").unwrap();
+        assert_eq!(start.status, "done");
+        assert_eq!(start.output.as_deref(), Some("Look at PR #1"));
+        assert_eq!(review.status, "pending");
     }
 }

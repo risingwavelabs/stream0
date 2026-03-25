@@ -14,6 +14,7 @@ const markup = `
     <div class="sidebar-logo">Box<span>0</span></div>
     <div class="sidebar-nav">
       <a href="#/tasks" data-page="tasks"><span class="nav-icon">T</span> Tasks</a>
+      <a href="#/workflows" data-page="workflows"><span class="nav-icon">W</span> Workflows</a>
     </div>
     <div class="sidebar-nav" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:8px">
       <a href="#/agents" data-page="agents" style="font-size:13px;opacity:0.7"><span class="nav-icon">A</span> Agents</a>
@@ -79,9 +80,25 @@ export function mountLegacyDashboard(root) {
           App.auth.logout()
           throw new Error('Unauthorized')
         }
-        return res.json().then((data) => {
-          if (!res.ok) throw new Error(data.error || 'Request failed')
-          return data
+        return res.text().then((text) => {
+          const contentType = res.headers.get('content-type') || ''
+          const isJson = contentType.includes('application/json')
+          const data = text
+            ? isJson
+              ? JSON.parse(text)
+              : null
+            : null
+
+          if (!res.ok) {
+            const message =
+              (data && data.error) ||
+              text ||
+              `Request failed (${res.status})`
+            throw new Error(message)
+          }
+
+          if (data !== null) return data
+          return {}
         })
       })
     },
@@ -196,6 +213,9 @@ export function mountLegacyDashboard(root) {
       '/agents': () => {
         App.agentsPage.render()
       },
+      '/workflows': () => {
+        App.workflowsPage.render()
+      },
       '/workspaces': () => {
         App.workspacesPage.render()
       },
@@ -218,6 +238,10 @@ export function mountLegacyDashboard(root) {
       if (App.tasksPage._chatTimer) {
         clearInterval(App.tasksPage._chatTimer)
         App.tasksPage._chatTimer = null
+      }
+      if (App.workflowDetail && App.workflowDetail._runTimer) {
+        clearInterval(App.workflowDetail._runTimer)
+        App.workflowDetail._runTimer = null
       }
 
       const hash = location.hash || '#/tasks'
@@ -251,6 +275,14 @@ export function mountLegacyDashboard(root) {
         App.detail.render(agentName, threadId)
         document.querySelectorAll('.sidebar-nav a').forEach((link) => {
           link.classList.toggle('active', link.getAttribute('data-page') === 'agents')
+        })
+        return
+      }
+
+      if (parts[0] === 'workflows' && parts[1]) {
+        App.workflowDetail.render(decodeURIComponent(parts[1]))
+        document.querySelectorAll('.sidebar-nav a').forEach((link) => {
+          link.classList.toggle('active', link.getAttribute('data-page') === 'workflows')
         })
         return
       }
@@ -320,6 +352,139 @@ export function mountLegacyDashboard(root) {
       return JSON.stringify(content, null, 2)
     }
     return String(content)
+  }
+
+  function defaultNodeTitle(kind) {
+    if (kind === 'start') return 'Start'
+    if (kind === 'agent') return 'Agent Step'
+    if (kind === 'human_input') return 'Human Input'
+    if (kind === 'end') return 'End'
+    return 'Step'
+  }
+
+  function workflowPreviewLayout(definition) {
+    const nodes = definition.nodes || []
+    const edges = definition.edges || []
+    const width = 190
+    const height = 92
+    const padding = 24
+    const columnGap = 230
+    const rowGap = 130
+
+    const uniquePositions = new Set(
+      nodes.map((node) => `${Math.round(node.position_x || 0)}:${Math.round(node.position_y || 0)}`),
+    )
+    const useSavedPositions = uniquePositions.size > 1
+
+    if (useSavedPositions) {
+      let minX = Infinity
+      let minY = Infinity
+      nodes.forEach((node) => {
+        minX = Math.min(minX, node.position_x || 0)
+        minY = Math.min(minY, node.position_y || 0)
+      })
+
+      const positions = {}
+      let maxRight = 0
+      let maxBottom = 0
+      nodes.forEach((node) => {
+        const x = padding + (node.position_x || 0) - minX
+        const y = padding + (node.position_y || 0) - minY
+        positions[node.id] = { x, y }
+        maxRight = Math.max(maxRight, x + width)
+        maxBottom = Math.max(maxBottom, y + height)
+      })
+      return {
+        width: maxRight + padding,
+        height: maxBottom + padding,
+        nodeWidth: width,
+        nodeHeight: height,
+        positions,
+      }
+    }
+
+    const nodeMap = {}
+    nodes.forEach((node) => {
+      nodeMap[node.id] = node
+    })
+
+    const incoming = {}
+    const outgoing = {}
+    nodes.forEach((node) => {
+      incoming[node.id] = []
+      outgoing[node.id] = []
+    })
+    edges.forEach((edge) => {
+      if (incoming[edge.target_node_id]) incoming[edge.target_node_id].push(edge.source_node_id)
+      if (outgoing[edge.source_node_id]) outgoing[edge.source_node_id].push(edge.target_node_id)
+    })
+
+    const depth = {}
+    const indegree = {}
+    nodes.forEach((node) => {
+      indegree[node.id] = incoming[node.id].length
+      depth[node.id] = node.kind === 'start' ? 0 : 1
+    })
+
+    const queue = nodes
+      .filter((node) => indegree[node.id] === 0)
+      .sort((a, b) => a.title.localeCompare(b.title))
+      .map((node) => node.id)
+
+    while (queue.length) {
+      const nodeId = queue.shift()
+      ;(outgoing[nodeId] || []).forEach((targetId) => {
+        depth[targetId] = Math.max(depth[targetId] || 0, (depth[nodeId] || 0) + 1)
+        indegree[targetId] -= 1
+        if (indegree[targetId] === 0) queue.push(targetId)
+      })
+    }
+
+    const columns = {}
+    nodes.forEach((node) => {
+      const col = depth[node.id] || 0
+      if (!columns[col]) columns[col] = []
+      columns[col].push(node)
+    })
+
+    Object.values(columns).forEach((column) => {
+      column.sort((a, b) => {
+        const kindOrder = { start: 0, agent: 1, human_input: 2, end: 3 }
+        const diff = (kindOrder[a.kind] || 9) - (kindOrder[b.kind] || 9)
+        if (diff !== 0) return diff
+        return (a.title || '').localeCompare(b.title || '')
+      })
+    })
+
+    const positions = {}
+    let maxRight = 0
+    let maxBottom = 0
+    Object.entries(columns).forEach(([columnIndex, column]) => {
+      column.forEach((node, rowIndex) => {
+        const x = padding + Number(columnIndex) * columnGap
+        const y = padding + rowIndex * rowGap
+        positions[node.id] = { x, y }
+        maxRight = Math.max(maxRight, x + width)
+        maxBottom = Math.max(maxBottom, y + height)
+      })
+    })
+
+    return {
+      width: maxRight + padding,
+      height: maxBottom + padding,
+      nodeWidth: width,
+      nodeHeight: height,
+      positions,
+    }
+  }
+
+  function workflowEdgePath(from, to, nodeWidth, nodeHeight) {
+    const startX = from.x + nodeWidth
+    const startY = from.y + nodeHeight / 2
+    const endX = to.x
+    const endY = to.y + nodeHeight / 2
+    const curve = Math.max(40, Math.abs(endX - startX) * 0.35)
+    return `M ${startX} ${startY} C ${startX + curve} ${startY}, ${endX - curve} ${endY}, ${endX} ${endY}`
   }
 
   App.webAgent = {
@@ -1237,6 +1402,741 @@ export function mountLegacyDashboard(root) {
           document.querySelector('.modal-overlay').remove()
           App.toast.success('Quick task started')
           App.router.navigate(`#/agents/${encodeURIComponent(result.agentName)}/${encodeURIComponent(result.threadId)}`)
+        })
+        .catch((error) => {
+          App.toast.error(`Failed: ${error.message}`)
+        })
+    },
+  }
+
+  App.workflowsPage = {
+    render() {
+      if (!App.currentWorkspace) {
+        setContent('<div class="empty-state"><p>No workspace selected.</p></div>')
+        return
+      }
+
+      App.poll.stopAll()
+      showLoading()
+
+      Promise.all([
+        App.api.get(App.workspacePath('/agents')),
+        App.api.get(App.workspacePath('/workflows')),
+      ])
+        .then(([agentsData, workflowsData]) => {
+          const agents = agentsData.agents || []
+          const workflows = workflowsData.workflows || []
+          let html = ''
+          html += '<div class="page-header"><h2>Workflows</h2>'
+          html += `<button class="btn btn-primary"${agents.length === 0 ? ' disabled' : ''} onclick="App.workflowsPage.showAdd()">+ Create Workflow</button></div>`
+
+          if (agents.length === 0) {
+            html += '<div class="card"><div class="empty-state">'
+            html += '<p>Workflows need at least one agent in this workspace.</p>'
+            html += '<a class="btn btn-primary" href="#/agents">Create an Agent First</a>'
+            html += '</div></div>'
+            setContent(html)
+            return
+          }
+
+          if (workflows.length === 0) {
+            html += '<div class="card"><div class="empty-state">'
+            html += '<p>No workflows yet.</p>'
+            html += '<button class="btn btn-primary" onclick="App.workflowsPage.showAdd()">Create Your First Workflow</button>'
+            html += '</div></div>'
+            setContent(html)
+            return
+          }
+
+          html += '<div class="card"><table>'
+          html += '<thead><tr><th>Name</th><th>Status</th><th>Nodes</th><th>Agents</th><th>Updated</th><th>Created By</th></tr></thead><tbody>'
+          workflows.forEach((workflow) => {
+            html += `<tr class="clickable" onclick="App.router.navigate('#/workflows/${encodeURIComponent(workflow.id)}')">`
+            html += `<td><strong>${esc(workflow.name)}</strong><div style="color:var(--text-secondary);font-size:12px">${esc(truncate(workflow.description || '(no description)', 80))}</div></td>`
+            html += `<td>${statusDot(workflow.status)}</td>`
+            html += `<td>${esc(workflow.node_count)}</td>`
+            html += `<td>${esc(workflow.agent_count)}</td>`
+            html += `<td>${timeAgo(workflow.updated_at)}</td>`
+            html += `<td>${esc(workflow.created_by)}</td>`
+            html += '</tr>'
+          })
+          html += '</tbody></table></div>'
+          setContent(html)
+        })
+        .catch((error) => {
+          App.toast.error(`Failed to load workflows: ${error.message}`)
+        })
+    },
+
+    showAdd() {
+      App.api
+        .get(App.workspacePath('/agents'))
+        .then((data) => {
+          const agents = data.agents || []
+          if (agents.length === 0) {
+            App.toast.error('Create an agent before creating a workflow')
+            return
+          }
+
+          let html = '<div class="modal-overlay" onclick="if(event.target===this)this.remove()"><div class="modal">'
+          html += '<div class="modal-header">Create Workflow<button class="btn-icon" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button></div>'
+          html += '<div class="modal-body">'
+          html += '<div class="form-group"><label>Name</label><input id="wf-create-name" placeholder="e.g. Research and Review"></div>'
+          html += '<div class="form-group"><label>Description</label><textarea id="wf-create-description" placeholder="What is this workflow for?"></textarea></div>'
+          html += '<div class="form-group"><label>First Agent Step</label><select id="wf-create-agent">'
+          agents.forEach((agent) => {
+            html += `<option value="${escAttr(agent.name)}">${esc(agent.name)}</option>`
+          })
+          html += '</select></div>'
+          html += '</div>'
+          html += '<div class="modal-footer"><button class="btn btn-outline" onclick="this.closest(\'.modal-overlay\').remove()">Cancel</button>'
+          html += '<button class="btn btn-primary" onclick="App.workflowsPage.create()">Create</button></div></div></div>'
+          document.body.insertAdjacentHTML('beforeend', html)
+          document.getElementById('wf-create-name').focus()
+        })
+        .catch((error) => {
+          App.toast.error(`Failed: ${error.message}`)
+        })
+    },
+
+    create() {
+      const name = document.getElementById('wf-create-name').value.trim()
+      const description = document.getElementById('wf-create-description').value.trim()
+      const firstAgent = document.getElementById('wf-create-agent').value
+      if (!name || !firstAgent) {
+        App.toast.error('Name and first agent are required')
+        return
+      }
+
+      const startId = `node-${crypto.randomUUID().slice(0, 8)}`
+      const agentId = `node-${crypto.randomUUID().slice(0, 8)}`
+      const endId = `node-${crypto.randomUUID().slice(0, 8)}`
+      const payload = {
+        name,
+        description,
+        status: 'draft',
+        nodes: [
+          { id: startId, kind: 'start', title: 'Start', prompt: '', position_x: 0, position_y: 0 },
+          { id: agentId, kind: 'agent', title: 'Agent Step', prompt: '', agent_name: firstAgent, position_x: 220, position_y: 0 },
+          { id: endId, kind: 'end', title: 'End', prompt: '', position_x: 440, position_y: 0 },
+        ],
+        edges: [
+          { id: `edge-${crypto.randomUUID().slice(0, 8)}`, source_node_id: startId, target_node_id: agentId },
+          { id: `edge-${crypto.randomUUID().slice(0, 8)}`, source_node_id: agentId, target_node_id: endId },
+        ],
+      }
+
+      App.api
+        .post(App.workspacePath('/workflows'), payload)
+        .then((workflow) => {
+          document.querySelector('.modal-overlay').remove()
+          App.toast.success('Workflow created')
+          App.router.navigate(`#/workflows/${encodeURIComponent(workflow.id)}`)
+        })
+        .catch((error) => {
+          App.toast.error(`Failed: ${error.message}`)
+        })
+    },
+  }
+
+  App.workflowDetail = {
+    _definition: null,
+    _agents: [],
+    _runs: [],
+    _selectedRunId: null,
+    _selectedRunDetail: null,
+    _workflowId: null,
+    _runTimer: null,
+    _threadMessages: {},
+    _expandedThreadId: null,
+
+    render(workflowId) {
+      if (!App.currentWorkspace) return
+      App.poll.stopAll()
+      App.workflowDetail._workflowId = workflowId
+      App.workflowDetail._selectedRunId = null
+      App.workflowDetail._selectedRunDetail = null
+      App.workflowDetail._threadMessages = {}
+      App.workflowDetail._expandedThreadId = null
+      if (App.workflowDetail._runTimer) {
+        clearInterval(App.workflowDetail._runTimer)
+        App.workflowDetail._runTimer = null
+      }
+      App.workflowDetail.load(true)
+    },
+
+    load(showSpinner = false) {
+      if (!App.currentWorkspace || !App.workflowDetail._workflowId) return
+      if (showSpinner) showLoading()
+
+      Promise.all([
+        App.api.get(App.workspacePath(`/workflows/${encodeURIComponent(App.workflowDetail._workflowId)}`)),
+        App.api.get(App.workspacePath('/agents')),
+        App.api.get(App.workspacePath(`/workflow-runs?workflow_id=${encodeURIComponent(App.workflowDetail._workflowId)}`)),
+      ])
+        .then(([definition, agentsData, runsData]) => {
+          App.workflowDetail._definition = definition
+          App.workflowDetail._agents = agentsData.agents || []
+          App.workflowDetail._runs = runsData.runs || []
+
+          const selectedRunId =
+            App.workflowDetail._selectedRunId ||
+            (App.workflowDetail._runs[0] ? App.workflowDetail._runs[0].id : null)
+
+          if (selectedRunId) {
+            App.workflowDetail._selectedRunId = selectedRunId
+            return App.api
+              .get(App.workspacePath(`/workflow-runs/${encodeURIComponent(selectedRunId)}`))
+              .then((runDetail) => {
+                App.workflowDetail._selectedRunDetail = runDetail
+                App.workflowDetail.renderEditor()
+                App.workflowDetail.ensureRunPolling()
+              })
+          }
+
+          App.workflowDetail._selectedRunDetail = null
+          App.workflowDetail.renderEditor()
+          App.workflowDetail.ensureRunPolling()
+          return null
+        })
+        .catch((error) => {
+          App.toast.error(`Failed to load workflow: ${error.message}`)
+        })
+    },
+
+    ensureRunPolling() {
+      if (App.workflowDetail._runTimer) {
+        clearInterval(App.workflowDetail._runTimer)
+        App.workflowDetail._runTimer = null
+      }
+      const detail = App.workflowDetail._selectedRunDetail
+      const status = detail && detail.run ? detail.run.status : null
+      if (!status || ['done', 'failed', 'cancelled'].includes(status)) return
+      App.workflowDetail._runTimer = window.setInterval(() => {
+        App.workflowDetail.load(false)
+      }, 3000)
+    },
+
+    renderEditor() {
+      const definition = App.workflowDetail._definition
+      if (!definition) return
+
+      const workflow = definition.workflow
+      const nodes = definition.nodes || []
+      const edges = definition.edges || []
+      const runs = App.workflowDetail._runs || []
+      const selectedRun = App.workflowDetail._selectedRunDetail
+      const nodeMap = {}
+      nodes.forEach((node) => {
+        nodeMap[node.id] = node
+      })
+
+      let html = ''
+      html += '<div style="margin-bottom:16px">'
+      html += '<a href="#/workflows" style="color:var(--text-secondary);text-decoration:none;font-size:13px">&larr; Workflows</a>'
+      html += '</div>'
+      html += '<div class="page-header">'
+      html += `<h2>${esc(workflow.name)}</h2>`
+      html += '<div>'
+      if (workflow.status !== 'published') {
+        html += '<button class="btn btn-outline" onclick="App.workflowDetail.publish()">Publish</button> '
+      }
+      html += `<button class="btn btn-outline" onclick="App.workflowDetail.showRun()"${workflow.status === 'archived' ? ' disabled' : ''}>Run Workflow</button> `
+      html += '<button class="btn btn-outline" onclick="App.workflowDetail.addNode(\'agent\')">+ Agent Step</button> '
+      html += '<button class="btn btn-outline" onclick="App.workflowDetail.addNode(\'human_input\')">+ Human Input</button> '
+      html += '<button class="btn btn-primary" onclick="App.workflowDetail.save()">Save</button> '
+      html += `<button class="btn btn-danger" onclick="App.workflowDetail.remove('${escAttr(workflow.id)}')">Delete</button>`
+      html += '</div></div>'
+
+      html += '<div class="card" style="margin-bottom:20px"><div class="card-header">Workflow</div><div class="card-body">'
+      html += '<div class="form-group"><label>Name</label><input id="wf-name" value="' + escAttr(workflow.name) + '"></div>'
+      html += '<div class="form-group"><label>Description</label><textarea id="wf-description" placeholder="Optional description">' + esc(workflow.description || '') + '</textarea></div>'
+      html += '<div class="form-row">'
+      html += '<div class="form-group"><label>Status</label><select id="wf-status">'
+      ;['draft', 'published', 'archived'].forEach((status) => {
+        const selected = workflow.status === status ? ' selected' : ''
+        html += `<option value="${status}"${selected}>${status}</option>`
+      })
+      html += '</select></div>'
+      html += `<div class="form-group"><label>Workflow ID</label><input value="${escAttr(workflow.id)}" readonly onclick="this.select()" style="font-family:var(--mono)"></div>`
+      html += '</div>'
+      html += '</div></div>'
+
+      html += '<div class="card" style="margin-bottom:20px"><div class="card-header">Flow Preview</div><div class="card-body">'
+      if (!nodes.length) {
+        html += '<p style="color:var(--text-secondary)">No nodes yet.</p>'
+      } else {
+        const preview = workflowPreviewLayout(definition)
+        html += `<div class="workflow-canvas" style="height:${preview.height}px">`
+        html += `<svg class="workflow-canvas-svg" viewBox="0 0 ${preview.width} ${preview.height}" preserveAspectRatio="xMinYMin meet">`
+        html += '<defs><marker id="workflow-arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8"></path></marker></defs>'
+        edges.forEach((edge) => {
+          const from = preview.positions[edge.source_node_id]
+          const to = preview.positions[edge.target_node_id]
+          if (!from || !to) return
+          html += `<path d="${workflowEdgePath(from, to, preview.nodeWidth, preview.nodeHeight)}" class="workflow-edge-line" marker-end="url(#workflow-arrow)"></path>`
+        })
+        html += '</svg>'
+        nodes.forEach((node) => {
+          const pos = preview.positions[node.id]
+          if (!pos) return
+          html += `<button type="button" class="workflow-node-card workflow-node-card-${escAttr(node.kind)}" style="left:${pos.x}px;top:${pos.y}px;width:${preview.nodeWidth}px" onclick="App.workflowDetail.focusNode('${escAttr(node.id)}')">`
+          html += `<div class="workflow-node-card-kind">${esc(node.kind.replace('_', ' '))}</div>`
+          html += `<div class="workflow-node-card-title">${esc(node.title || defaultNodeTitle(node.kind))}</div>`
+          if (node.kind === 'agent' && node.agent_name) {
+            html += `<div class="workflow-node-card-meta">${esc(node.agent_name)}</div>`
+          } else if (node.kind === 'human_input') {
+            html += '<div class="workflow-node-card-meta">user input</div>'
+          } else if (node.kind === 'start') {
+            html += '<div class="workflow-node-card-meta">run input</div>'
+          } else if (node.kind === 'end') {
+            html += '<div class="workflow-node-card-meta">terminal</div>'
+          }
+          html += '</button>'
+        })
+        html += '</div>'
+      }
+      html += '</div></div>'
+
+      html += '<div class="card" style="margin-bottom:20px"><div class="card-header">Nodes</div><div class="card-body">'
+      if (nodes.length === 0) {
+        html += '<p style="color:var(--text-secondary)">No nodes.</p>'
+      } else {
+        nodes.forEach((node) => {
+          html += `<div class="workflow-node-editor">`
+          html += '<div class="workflow-node-head">'
+          html += `<strong>${esc(node.title || defaultNodeTitle(node.kind))}</strong>`
+          html += `<button class="btn btn-sm btn-danger" onclick="App.workflowDetail.removeNode('${escAttr(node.id)}')">Remove</button>`
+          html += '</div>'
+          html += '<div class="form-row">'
+          html += `<div class="form-group"><label>Kind</label><select id="wf-node-kind-${escAttr(node.id)}" onchange="App.workflowDetail.changeKind('${escAttr(node.id)}', this.value)">`
+          ;['start', 'agent', 'human_input', 'end'].forEach((kind) => {
+            const selected = node.kind === kind ? ' selected' : ''
+            html += `<option value="${kind}"${selected}>${kind}</option>`
+          })
+          html += '</select></div>'
+          html += `<div class="form-group"><label>Title</label><input id="wf-node-title-${escAttr(node.id)}" value="${escAttr(node.title || '')}" placeholder="${escAttr(defaultNodeTitle(node.kind))}"></div>`
+          html += '</div>'
+          if (node.kind === 'agent') {
+            html += `<div class="form-group"><label>Agent</label><select id="wf-node-agent-${escAttr(node.id)}">`
+            App.workflowDetail._agents.forEach((agent) => {
+              const selected = node.agent_name === agent.name ? ' selected' : ''
+              html += `<option value="${escAttr(agent.name)}"${selected}>${esc(agent.name)}</option>`
+            })
+            html += '</select></div>'
+          }
+          html += `<div class="form-group"><label>${node.kind === 'human_input' ? 'Question / Prompt' : 'Prompt'}</label><textarea id="wf-node-prompt-${escAttr(node.id)}" placeholder="Optional prompt">${esc(node.prompt || '')}</textarea></div>`
+          html += `<div class="workflow-node-meta">${esc(node.id)}</div>`
+          html += '</div>'
+        })
+      }
+      html += '</div></div>'
+
+      html += '<div class="card"><div class="card-header">Edges</div><div class="card-body">'
+      if (edges.length === 0) {
+        html += '<p style="color:var(--text-secondary);margin-bottom:12px">No edges yet.</p>'
+      } else {
+        html += '<table style="margin-bottom:16px"><thead><tr><th>From</th><th>To</th><th></th></tr></thead><tbody>'
+        edges.forEach((edge) => {
+          const source = nodeMap[edge.source_node_id]
+          const target = nodeMap[edge.target_node_id]
+          html += '<tr>'
+          html += `<td>${esc(source ? source.title : edge.source_node_id)}</td>`
+          html += `<td>${esc(target ? target.title : edge.target_node_id)}</td>`
+          html += `<td><button class="btn btn-sm btn-danger" onclick="App.workflowDetail.removeEdge('${escAttr(edge.id)}')">Remove</button></td>`
+          html += '</tr>'
+        })
+        html += '</tbody></table>'
+      }
+      html += '<div class="form-row">'
+      html += '<div class="form-group"><label>From</label><select id="wf-new-edge-source">'
+      nodes.forEach((node) => {
+        html += `<option value="${escAttr(node.id)}">${esc(node.title || defaultNodeTitle(node.kind))}</option>`
+      })
+      html += '</select></div>'
+      html += '<div class="form-group"><label>To</label><select id="wf-new-edge-target">'
+      nodes.forEach((node) => {
+        html += `<option value="${escAttr(node.id)}">${esc(node.title || defaultNodeTitle(node.kind))}</option>`
+      })
+      html += '</select></div>'
+      html += '</div>'
+      html += '<button class="btn btn-outline" onclick="App.workflowDetail.addEdge()">+ Add Edge</button>'
+      html += '</div></div>'
+
+      html += '<div class="card" style="margin-top:20px;margin-bottom:20px"><div class="card-header">Runs'
+      if (runs.length) {
+        html += `<span style="font-weight:normal;color:var(--text-secondary);margin-left:8px">${runs.length}</span>`
+      }
+      html += '</div><div class="card-body">'
+      if (!runs.length) {
+        html += '<div class="empty-state" style="padding:24px 12px"><p>No workflow runs yet.</p>'
+        html += `<button class="btn btn-primary" onclick="App.workflowDetail.showRun()"${workflow.status === 'archived' ? ' disabled' : ''}>Run This Workflow</button>`
+        html += '</div>'
+      } else {
+        html += '<table><thead><tr><th>Run</th><th>Status</th><th>Started</th><th>Finished</th><th></th></tr></thead><tbody>'
+        runs.forEach((run) => {
+          const selected = App.workflowDetail._selectedRunId === run.id ? ' style="background:rgba(59,130,246,0.06)"' : ''
+          html += `<tr class="clickable"${selected} onclick="App.workflowDetail.selectRun('${escAttr(run.id)}')">`
+          html += `<td><strong>${esc(run.id)}</strong></td>`
+          html += `<td>${statusDot(run.status)}</td>`
+          html += `<td>${timeAgo(run.started_at)}</td>`
+          html += `<td>${run.finished_at ? timeAgo(run.finished_at) : '<span style="color:var(--text-secondary)">running</span>'}</td>`
+          html += '<td>'
+          if (run.id === App.workflowDetail._selectedRunId) {
+            html += '<span style="color:var(--text-secondary)">selected</span>'
+          }
+          html += '</td></tr>'
+        })
+        html += '</tbody></table>'
+      }
+      html += '</div></div>'
+
+      if (selectedRun && selectedRun.run) {
+        const stepRuns = selectedRun.step_runs || []
+        html += '<div class="card"><div class="card-header">Run Detail</div><div class="card-body">'
+        html += '<dl class="detail-grid" style="margin-bottom:20px">'
+        html += `<dt>Run ID</dt><dd>${esc(selectedRun.run.id)}</dd>`
+        html += `<dt>Status</dt><dd>${statusDot(selectedRun.run.status)}</dd>`
+        html += `<dt>Started</dt><dd>${timeAgo(selectedRun.run.started_at)}</dd>`
+        html += `<dt>Input</dt><dd>${selectedRun.run.input ? `<div class="instructions-block">${esc(selectedRun.run.input)}</div>` : '<span style="color:var(--text-secondary)">(none)</span>'}</dd>`
+        if (selectedRun.run.error) {
+          html += `<dt>Error</dt><dd><div class="instructions-block">${esc(selectedRun.run.error)}</div></dd>`
+        }
+        html += '</dl>'
+        if (!stepRuns.length) {
+          html += '<p style="color:var(--text-secondary)">No step runs.</p>'
+        } else {
+          stepRuns.forEach((step) => {
+            html += '<div class="workflow-step-run">'
+            html += '<div class="workflow-step-run-head">'
+            html += `<div><strong>${esc(step.node_title)}</strong><div style="font-size:12px;color:var(--text-secondary)">${esc(step.node_kind)}${step.agent_name ? ` · ${esc(step.agent_name)}` : ''}</div></div>`
+            html += '<div>'
+            html += `${statusDot(step.status)}`
+            if (['done', 'failed'].includes(step.status)) {
+              html += ` <button class="btn btn-sm btn-outline" onclick="App.workflowDetail.retryStep('${escAttr(selectedRun.run.id)}','${escAttr(step.id)}')">Retry</button>`
+            }
+            if (step.status === 'waiting_for_input') {
+              html += ` <button class="btn btn-sm btn-primary" onclick="App.workflowDetail.showStepInput('${escAttr(selectedRun.run.id)}','${escAttr(step.id)}')">Provide Input</button>`
+            }
+            if (step.thread_id) {
+              const label = App.workflowDetail._expandedThreadId === step.thread_id ? 'Hide Messages' : 'View Messages'
+              html += ` <button class="btn btn-sm btn-outline" onclick="App.workflowDetail.toggleStepThread('${escAttr(step.thread_id)}')">${label}</button>`
+            }
+            html += '</div></div>'
+            if (step.input) {
+              html += `<div class="workflow-step-run-block"><div class="workflow-step-run-label">Input</div><div class="instructions-block">${esc(step.input)}</div></div>`
+            }
+            if (step.output) {
+              html += `<div class="workflow-step-run-block"><div class="workflow-step-run-label">Output</div><div class="instructions-block">${esc(step.output)}</div></div>`
+            }
+            if (step.error) {
+              html += `<div class="workflow-step-run-block"><div class="workflow-step-run-label">Error</div><div class="instructions-block">${esc(step.error)}</div></div>`
+            }
+            if (step.thread_id && App.workflowDetail._expandedThreadId === step.thread_id) {
+              html += App.workflowDetail.renderThreadMessages(step.thread_id)
+            }
+            html += '</div>'
+          })
+        }
+        html += '</div></div>'
+      }
+
+      setContent(html)
+    },
+
+    focusNode(nodeId) {
+      const input = document.getElementById(`wf-node-title-${nodeId}`)
+      if (!input) return
+      input.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      input.focus()
+      input.select()
+    },
+
+    selectRun(runId) {
+      App.workflowDetail._selectedRunId = runId
+      App.workflowDetail._expandedThreadId = null
+      App.api
+        .get(App.workspacePath(`/workflow-runs/${encodeURIComponent(runId)}`))
+        .then((runDetail) => {
+          App.workflowDetail._selectedRunDetail = runDetail
+          App.workflowDetail.renderEditor()
+          App.workflowDetail.ensureRunPolling()
+        })
+        .catch((error) => {
+          App.toast.error(`Failed to load run: ${error.message}`)
+        })
+    },
+
+    renderThreadMessages(threadId) {
+      const messages = App.workflowDetail._threadMessages[threadId]
+      if (!messages) {
+        return '<div class="workflow-thread-box"><div class="loading"><span class="spinner"></span></div></div>'
+      }
+      if (messages.length === 0) {
+        return '<div class="workflow-thread-box"><p style="color:var(--text-secondary)">No messages yet.</p></div>'
+      }
+
+      let html = '<div class="workflow-thread-box"><div class="thread-messages">'
+      messages.forEach((message) => {
+        html += '<div class="thread-msg">'
+        html += '<div class="thread-msg-header">'
+        html += `<strong>${esc(message.from_id || message.from)}</strong>`
+        html += ` &rarr; ${esc(message.to_id || message.to)}`
+        html += ` <span class="thread-msg-type ${esc(message.msg_type || message.type)}">${esc(message.msg_type || message.type)}</span>`
+        html += ` <span style="margin-left:auto">${timeAgo(message.created_at)}</span>`
+        html += '</div>'
+        const text = contentAsText(message.content)
+        if (text) {
+          html += `<div class="thread-msg-content">${esc(text)}</div>`
+        }
+        html += '</div>'
+      })
+      html += '</div></div>'
+      return html
+    },
+
+    toggleStepThread(threadId) {
+      if (App.workflowDetail._expandedThreadId === threadId) {
+        App.workflowDetail._expandedThreadId = null
+        App.workflowDetail.renderEditor()
+        return
+      }
+
+      App.workflowDetail._expandedThreadId = threadId
+      App.workflowDetail.renderEditor()
+      App.api
+        .get(App.workspacePath(`/threads/${encodeURIComponent(threadId)}`))
+        .then((data) => {
+          App.workflowDetail._threadMessages[threadId] = data.messages || []
+          App.workflowDetail.renderEditor()
+        })
+        .catch((error) => {
+          App.toast.error(`Failed to load messages: ${error.message}`)
+        })
+    },
+
+    showRun() {
+      const workflow = App.workflowDetail._definition && App.workflowDetail._definition.workflow
+      if (!workflow || workflow.status === 'archived') return
+      let html = '<div class="modal-overlay" onclick="if(event.target===this)this.remove()"><div class="modal">'
+      html += '<div class="modal-header">Run Workflow<button class="btn-icon" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button></div>'
+      html += '<div class="modal-body">'
+      html += '<div class="form-group"><label>Run Input</label><textarea id="wf-run-input" placeholder="Optional instructions or context for this run"></textarea></div>'
+      html += '</div>'
+      html += '<div class="modal-footer"><button class="btn btn-outline" onclick="this.closest(\'.modal-overlay\').remove()">Cancel</button>'
+      html += '<button class="btn btn-primary" onclick="App.workflowDetail.startRun()">Start Run</button></div></div></div>'
+      document.body.insertAdjacentHTML('beforeend', html)
+      document.getElementById('wf-run-input').focus()
+    },
+
+    startRun() {
+      const workflow = App.workflowDetail._definition && App.workflowDetail._definition.workflow
+      if (!workflow) return
+      const input = document.getElementById('wf-run-input').value.trim()
+      App.api
+        .post(App.workspacePath(`/workflows/${encodeURIComponent(workflow.id)}/runs`), {
+          input: input || null,
+        })
+        .then((runDetail) => {
+          document.querySelector('.modal-overlay').remove()
+          App.toast.success('Workflow run started')
+          App.workflowDetail._selectedRunId = runDetail.run.id
+          App.workflowDetail._selectedRunDetail = runDetail
+          App.workflowDetail.load(false)
+        })
+        .catch((error) => {
+          App.toast.error(`Failed: ${error.message}`)
+        })
+    },
+
+    publish() {
+      const workflow = App.workflowDetail._definition && App.workflowDetail._definition.workflow
+      if (!workflow) return
+      App.api
+        .post(App.workspacePath(`/workflows/${encodeURIComponent(workflow.id)}/publish`))
+        .then((updated) => {
+          App.workflowDetail._definition = updated
+          App.toast.success('Workflow published')
+          App.workflowDetail.renderEditor()
+        })
+        .catch((error) => {
+          App.toast.error(`Failed: ${error.message}`)
+        })
+    },
+
+    changeKind(nodeId, kind) {
+      const node = (App.workflowDetail._definition.nodes || []).find((item) => item.id === nodeId)
+      if (!node) return
+      node.kind = kind
+      if (kind !== 'agent') node.agent_name = null
+      if (!node.title) node.title = defaultNodeTitle(kind)
+      App.workflowDetail.renderEditor()
+    },
+
+    addNode(kind) {
+      const definition = App.workflowDetail._definition
+      if (!definition) return
+      definition.nodes.push({
+        id: `node-${crypto.randomUUID().slice(0, 8)}`,
+        workflow_id: definition.workflow.id,
+        kind,
+        title: defaultNodeTitle(kind),
+        prompt: '',
+        agent_name: kind === 'agent' && App.workflowDetail._agents[0] ? App.workflowDetail._agents[0].name : null,
+        position_x: 0,
+        position_y: 0,
+      })
+      App.workflowDetail.renderEditor()
+    },
+
+    removeNode(nodeId) {
+      const definition = App.workflowDetail._definition
+      if (!definition) return
+      definition.nodes = (definition.nodes || []).filter((node) => node.id !== nodeId)
+      definition.edges = (definition.edges || []).filter(
+        (edge) => edge.source_node_id !== nodeId && edge.target_node_id !== nodeId,
+      )
+      App.workflowDetail.renderEditor()
+    },
+
+    addEdge() {
+      const source = document.getElementById('wf-new-edge-source').value
+      const target = document.getElementById('wf-new-edge-target').value
+      if (!source || !target) {
+        App.toast.error('Select both nodes')
+        return
+      }
+      if (source === target) {
+        App.toast.error('An edge cannot point to the same node')
+        return
+      }
+
+      const exists = (App.workflowDetail._definition.edges || []).some(
+        (edge) => edge.source_node_id === source && edge.target_node_id === target,
+      )
+      if (exists) {
+        App.toast.error('That edge already exists')
+        return
+      }
+
+      App.workflowDetail._definition.edges.push({
+        id: `edge-${crypto.randomUUID().slice(0, 8)}`,
+        workflow_id: App.workflowDetail._definition.workflow.id,
+        source_node_id: source,
+        target_node_id: target,
+      })
+      App.workflowDetail.renderEditor()
+    },
+
+    removeEdge(edgeId) {
+      App.workflowDetail._definition.edges = (App.workflowDetail._definition.edges || []).filter((edge) => edge.id !== edgeId)
+      App.workflowDetail.renderEditor()
+    },
+
+    showStepInput(runId, stepRunId) {
+      let html = '<div class="modal-overlay" onclick="if(event.target===this)this.remove()"><div class="modal">'
+      html += '<div class="modal-header">Provide Input<button class="btn-icon" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button></div>'
+      html += '<div class="modal-body">'
+      html += '<div class="form-group"><label>Input</label><textarea id="wf-step-input" placeholder="Enter the response or approval text"></textarea></div>'
+      html += '</div>'
+      html += '<div class="modal-footer"><button class="btn btn-outline" onclick="this.closest(\'.modal-overlay\').remove()">Cancel</button>'
+      html += `<button class="btn btn-primary" onclick="App.workflowDetail.submitStepInput('${escAttr(runId)}','${escAttr(stepRunId)}')">Submit</button></div></div></div>`
+      document.body.insertAdjacentHTML('beforeend', html)
+      document.getElementById('wf-step-input').focus()
+    },
+
+    submitStepInput(runId, stepRunId) {
+      const input = document.getElementById('wf-step-input').value.trim()
+      if (!input) {
+        App.toast.error('Input is required')
+        return
+      }
+      App.api
+        .post(App.workspacePath(`/workflow-runs/${encodeURIComponent(runId)}/steps/${encodeURIComponent(stepRunId)}/input`), {
+          input,
+        })
+        .then((runDetail) => {
+          document.querySelector('.modal-overlay').remove()
+          App.toast.success('Input submitted')
+          App.workflowDetail._selectedRunId = runDetail.run.id
+          App.workflowDetail._selectedRunDetail = runDetail
+          App.workflowDetail.load(false)
+        })
+        .catch((error) => {
+          App.toast.error(`Failed: ${error.message}`)
+        })
+    },
+
+    retryStep(runId, stepRunId) {
+      App.api
+        .post(App.workspacePath(`/workflow-runs/${encodeURIComponent(runId)}/steps/${encodeURIComponent(stepRunId)}/retry`))
+        .then((runDetail) => {
+          App.toast.success('Step retried')
+          App.workflowDetail._selectedRunId = runDetail.run.id
+          App.workflowDetail._selectedRunDetail = runDetail
+          App.workflowDetail.load(false)
+        })
+        .catch((error) => {
+          App.toast.error(`Failed: ${error.message}`)
+        })
+    },
+
+    serializeNodes() {
+      return (App.workflowDetail._definition.nodes || []).map((node) => {
+        const kind = document.getElementById(`wf-node-kind-${node.id}`).value
+        const title = document.getElementById(`wf-node-title-${node.id}`).value.trim()
+        const promptEl = document.getElementById(`wf-node-prompt-${node.id}`)
+        const agentEl = document.getElementById(`wf-node-agent-${node.id}`)
+        return {
+          id: node.id,
+          kind,
+          title,
+          prompt: promptEl ? promptEl.value.trim() : '',
+          agent_name: kind === 'agent' && agentEl ? agentEl.value : null,
+          position_x: node.position_x || 0,
+          position_y: node.position_y || 0,
+        }
+      })
+    },
+
+    save() {
+      const definition = App.workflowDetail._definition
+      if (!definition) return
+      const payload = {
+        name: document.getElementById('wf-name').value.trim(),
+        description: document.getElementById('wf-description').value.trim(),
+        status: document.getElementById('wf-status').value,
+        nodes: App.workflowDetail.serializeNodes(),
+        edges: (definition.edges || []).map((edge) => ({
+          id: edge.id,
+          source_node_id: edge.source_node_id,
+          target_node_id: edge.target_node_id,
+        })),
+      }
+
+      App.api
+        .put(App.workspacePath(`/workflows/${encodeURIComponent(definition.workflow.id)}`), payload)
+        .then((updated) => {
+          App.toast.success('Workflow saved')
+          App.workflowDetail.refreshAfterSave(updated)
+        })
+        .catch((error) => {
+          App.toast.error(`Failed: ${error.message}`)
+        })
+    },
+
+    refreshAfterSave(updated) {
+      App.workflowDetail._definition = updated
+      App.workflowDetail.load(false)
+    },
+
+    remove(workflowId) {
+      if (!confirm('Remove this workflow?')) return
+      App.api
+        .del(App.workspacePath(`/workflows/${encodeURIComponent(workflowId)}`))
+        .then(() => {
+          App.toast.success('Workflow removed')
+          App.router.navigate('#/workflows')
         })
         .catch((error) => {
           App.toast.error(`Failed: ${error.message}`)
