@@ -97,6 +97,18 @@ b0 agent add ml-agent --instructions "ML specialist." --machine gpu-box
 
 **Web dashboard.** Manage agents, view tasks, and monitor machines at `http://localhost:8080`.
 
+## Key concepts
+
+**Server.** The central coordinator. Stores agents, routes tasks, serves the web dashboard. Start with `b0 server`. One server can manage many machines.
+
+**Machine.** A computer that runs agents. When you start `b0 server`, the server machine is automatically registered as `local`. Add more machines with `b0 machine join`. Each machine uses its own Claude Code or Codex credentials.
+
+**Agent.** A named AI worker with a specific role and instructions. Belongs to a workspace, runs on a machine. Created with `b0 agent add`.
+
+**Workspace.** A group for organizing agents and controlling team access. Each user gets a personal workspace. Create shared workspaces with `b0 workspace create` and add members with `b0 workspace add-member`.
+
+Machines belong to the server and are shared across all workspaces. Workspaces organize agents and access. An agent connects the two: it belongs to a workspace and runs on a machine.
+
 ## CLI reference
 
 ```
