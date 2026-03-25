@@ -234,7 +234,16 @@ The server is at: {server_url}
 
 When the user's request could benefit from specialized agents or parallel execution, delegate.
 
-Run `b0 agent ls` to see available agents and their descriptions. Match agents to the task based on their descriptions. You do not need the user to name specific agents.
+## Choosing an agent
+
+**Default to temp agents.** Most tasks are one-off. Use `b0 agent temp "<task>"` directly. No setup needed.
+
+**Use background agents only when:**
+- The user mentions an agent by name ("ask the reviewer", "delegate to security")
+- The user says "delegate to", "ask", "have someone", or names a specific agent
+- The task clearly needs a persistent agent (repeated use, shared across team)
+
+When the user references a specific agent, run `b0 agent ls` to find it. Otherwise, skip the lookup and use temp.
 
 ## Commands
 
