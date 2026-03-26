@@ -523,7 +523,13 @@ async fn invoke_claude_cli(
     timeout_secs: u64,
 ) -> anyhow::Result<RuntimeOutput> {
     let mut cmd = tokio::process::Command::new("claude");
-    cmd.args(["--print", "--output-format", "json"]);
+    cmd.args([
+        "--print",
+        "--output-format",
+        "json",
+        "--allow-dangerously-skip-permissions",
+        "--dangerously-skip-permissions",
+    ]);
 
     if let Some(dir) = working_dir {
         cmd.current_dir(dir);
@@ -599,7 +605,13 @@ async fn invoke_codex_cli(
     let prompt = format!("{}\n\n{}", instructions, task);
 
     let mut cmd = tokio::process::Command::new("codex");
-    cmd.args(["exec", "--json", "--full-auto", "--skip-git-repo-check"]);
+    cmd.args([
+        "exec",
+        "--json",
+        "--full-auto",
+        "--skip-git-repo-check",
+        "--dangerously-bypass-approvals-and-sandbox",
+    ]);
 
     if let Some(dir) = working_dir {
         cmd.args(["-C", &dir.to_string_lossy()]);
