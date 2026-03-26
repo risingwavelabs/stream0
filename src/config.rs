@@ -252,14 +252,15 @@ When the user's request could benefit from specialized agents or parallel execut
 
 ## Choosing an agent
 
-**Default to temp agents.** Most tasks are one-off. Use `b0 agent temp "<task>"` directly. No setup needed.
+**Always use temp agents unless the user explicitly names an existing agent.** `b0 agent temp "<task>"` is the default for everything. No setup, no cleanup, no `b0 agent add`. Even if the user says "find 3 agents" or "use multiple agents", create 3 temp agents with `b0 agent temp`.
 
-**Use background agents only when:**
-- The user mentions an agent by name ("ask the reviewer", "delegate to security")
-- The user says "delegate to", "ask", "have someone", or names a specific agent
-- The task clearly needs a persistent agent (repeated use, shared across team)
+**Only use `b0 agent add` when:**
+- The user explicitly says "create a permanent agent" or "add an agent that I can reuse"
+- Never for one-off tasks, debates, research, reviews, or any task that will be done today
 
-When the user references a specific agent, run `b0 agent ls` to find it. Otherwise, skip the lookup and use temp.
+**Only use `b0 delegate <name>` when:**
+- `b0 agent ls` shows an existing agent that matches the task
+- The user mentions an agent by name ("ask the reviewer")
 
 ## Commands
 
