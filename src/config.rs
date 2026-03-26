@@ -14,6 +14,8 @@ pub struct ServerConfig {
     pub db_path: String,
     #[serde(default = "default_log_level")]
     pub log_level: String,
+    #[serde(default)]
+    pub slack_token: Option<String>,
 }
 
 fn default_host() -> String {
@@ -41,6 +43,7 @@ impl Default for ServerConfig {
             port: default_port(),
             db_path: default_db_path(),
             log_level: default_log_level(),
+            slack_token: None,
         }
     }
 }
@@ -76,6 +79,11 @@ impl ServerConfig {
         if let Ok(v) = std::env::var("B0_LOG_LEVEL") {
             if !v.is_empty() {
                 cfg.log_level = v;
+            }
+        }
+        if let Ok(v) = std::env::var("B0_SLACK_TOKEN") {
+            if !v.is_empty() {
+                cfg.slack_token = Some(v);
             }
         }
 
@@ -219,14 +227,23 @@ impl CliConfig {
         format!(
             r#"# Box0 (`b0`) Agent Delegation
 
-You have access to a team of specialized AI agents managed by Box0.
+Run AI agents in parallel on one machine or many. Delegate tasks, collect results, schedule cron jobs.
 The server is at: {server_url}
 
 ## When to use
 
 When the user's request could benefit from specialized agents or parallel execution, delegate.
 
-Run `b0 agent ls` to see available agents and their descriptions. Match agents to the task based on their descriptions. You do not need the user to name specific agents.
+## Choosing an agent
+
+**Default to temp agents.** Most tasks are one-off. Use `b0 agent temp "<task>"` directly. No setup needed.
+
+**Use background agents only when:**
+- The user mentions an agent by name ("ask the reviewer", "delegate to security")
+- The user says "delegate to", "ask", "have someone", or names a specific agent
+- The task clearly needs a persistent agent (repeated use, shared across team)
+
+When the user references a specific agent, run `b0 agent ls` to find it. Otherwise, skip the lookup and use temp.
 
 ## Commands
 
@@ -240,7 +257,10 @@ b0 wait --timeout 0                                    # non-blocking check for 
 b0 reply <thread-id> "<answer>"                        # answer an agent's question
 b0 status                                              # check pending tasks
 b0 agent temp "<task>"                                 # one-off task, no named agent
-b0 cron add <agent> --every <interval> "<task>"        # schedule recurring task (30s/5m/1h/6h/1d)
+b0 agent add <name> --instructions "..."               # create a named agent
+b0 agent remove <name>                                 # delete an agent
+b0 cron add --every <interval> "<task>"                # schedule recurring task (auto-creates temp agent)
+b0 cron add --agent <name> --every <interval> "<task>" # schedule with existing agent
 b0 cron ls                                             # list scheduled tasks
 b0 cron remove <id>                                    # remove a scheduled task
 ```
@@ -263,9 +283,9 @@ Cite line numbers for any issues found."
 ```
 
 Steps:
-1. **Gather context first** — read relevant files, run `git diff`, check the branch
-2. **Include specifics** — file paths, line numbers, branch names, what changed and why
-3. **State the deliverable** — what the agent should produce (a list of issues, a summary, a fix)
+1. **Gather context first** - read relevant files, run `git diff`, check the branch
+2. **Include specifics** - file paths, line numbers, branch names, what changed and why
+3. **State the deliverable** - what the agent should produce (a list of issues, a summary, a fix)
 
 For large content (diffs, file contents), pipe via stdin:
 ```
@@ -280,10 +300,10 @@ Delegate to multiple agents, then collect all results:
 b0 delegate reviewer "Review the changes on branch feature-timeout..."
 b0 delegate security "Check src/handler.rs for OWASP top 10 vulnerabilities..."
 b0 delegate doc-writer "Update README to reflect the new timeout config option..."
-b0 wait
+b0 wait --all
 ```
 
-All three run in parallel. `b0 wait` blocks until all complete.
+All three run in parallel. `b0 wait --all` blocks until all complete.
 
 ## Handling agent questions
 
@@ -467,10 +487,10 @@ pub struct PendingThread {
     pub workspace: String,
     pub task: String,
     pub created_at: String,
-    #[serde(default = "default_kind_normal_str")]
+    #[serde(default = "default_kind_background_str")]
     pub kind: String,
 }
 
-fn default_kind_normal_str() -> String {
-    "normal".to_string()
+fn default_kind_background_str() -> String {
+    "background".to_string()
 }

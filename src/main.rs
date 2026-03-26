@@ -21,6 +21,8 @@ enum Command {
         port: Option<u16>,
         #[arg(long)]
         db: Option<String>,
+        #[arg(long)]
+        no_local: bool,
     },
     /// Connect to a Box0 server
     Login {
@@ -117,6 +119,12 @@ enum AgentCommand {
         /// Runtime: auto (default), claude, or codex
         #[arg(long, default_value = "auto")]
         runtime: String,
+        /// Webhook URL to POST results to
+        #[arg(long)]
+        webhook: Option<String>,
+        /// Slack channel to notify (e.g. "#ci-alerts")
+        #[arg(long)]
+        slack: Option<String>,
     },
     Ls {
         #[arg(long)]
@@ -172,7 +180,7 @@ enum AgentCommand {
 #[derive(Subcommand)]
 enum MachineCommand {
     Join {
-        server_url: String,
+        server_url: Option<String>,
         #[arg(long)]
         name: Option<String>,
         #[arg(long)]
@@ -214,6 +222,15 @@ enum CronCommand {
         every: String,
         /// Task to run
         task: String,
+        /// Webhook URL to POST results to
+        #[arg(long)]
+        webhook: Option<String>,
+        /// Slack channel to notify (e.g. "#ci-alerts")
+        #[arg(long)]
+        slack: Option<String>,
+        /// End date: stop running after this time (e.g. "2026-04-24" or "2026-04-24T12:00:00Z")
+        #[arg(long)]
+        until: Option<String>,
     },
     /// List scheduled tasks
     Ls {
@@ -241,7 +258,17 @@ enum CronCommand {
     },
 }
 
+fn require_config(cfg: &config::CliConfig) {
+    if cfg.api_key.is_none() {
+        eprintln!("Not connected to a server. Run one of:");
+        eprintln!("  b0 server                              Start a local server");
+        eprintln!("  b0 login <url> --key <key>             Connect to an existing server");
+        std::process::exit(1);
+    }
+}
+
 fn make_client(cfg: &config::CliConfig) -> client::BhClient {
+    require_config(cfg);
     match &cfg.api_key {
         Some(key) => client::BhClient::with_api_key(&cfg.server_url(), key),
         None => client::BhClient::new(&cfg.server_url()),
@@ -316,12 +343,7 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Server {
-            config: config_path,
-            host,
-            port,
-            db,
-        } => {
+        Command::Server { config: config_path, host, port, db, no_local } => {
             let mut cfg = config::ServerConfig::load(config_path.as_deref());
             if let Some(h) = host {
                 cfg.host = h;
@@ -345,7 +367,7 @@ async fn main() {
                 )
                 .init();
 
-            server::run(cfg).await;
+            server::run(cfg, no_local).await;
         }
 
         Command::Login { server_url, key } => cmd_login(&server_url, key.as_deref()).await,
@@ -362,6 +384,8 @@ async fn main() {
                 instructions,
                 machine,
                 runtime,
+                webhook,
+                slack,
             } => {
                 let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
@@ -374,7 +398,9 @@ async fn main() {
                         &instructions,
                         &machine,
                         &runtime,
-                        "normal",
+                        "background",
+                        webhook.as_deref(),
+                        slack.as_deref(),
                     )
                     .await
                 {
@@ -564,12 +590,17 @@ async fn main() {
         },
 
         Command::Machine { command } => match command {
-            MachineCommand::Join {
-                server_url,
-                name,
-                key,
-            } => {
-                cmd_machine_join(&server_url, name.as_deref(), key.as_deref()).await;
+            MachineCommand::Join { server_url, name, key } => {
+                let cfg = config::CliConfig::load();
+                let url = match server_url {
+                    Some(u) => u,
+                    None => {
+                        require_config(&cfg);
+                        cfg.server_url()
+                    }
+                };
+                let api_key = key.or_else(|| cfg.api_key.clone());
+                cmd_machine_join(&url, name.as_deref(), api_key.as_deref()).await;
             }
             MachineCommand::Ls => {
                 let cfg = config::CliConfig::load();
@@ -702,6 +733,9 @@ async fn main() {
                 agent,
                 every,
                 task,
+                webhook,
+                slack,
+                until,
             } => {
                 let workspace = resolve_workspace(workspace);
                 let cfg = config::CliConfig::load();
@@ -724,6 +758,8 @@ async fn main() {
                                 "local",
                                 "auto",
                                 "cron",
+                                webhook.as_deref(),
+                                slack.as_deref(),
                             )
                             .await
                         {
@@ -737,7 +773,7 @@ async fn main() {
                 };
 
                 match client
-                    .create_cron_job(&workspace, &agent_name, &every, &task)
+                    .create_cron_job(&workspace, &agent_name, &every, &task, until.as_deref())
                     .await
                 {
                     Ok(job) => println!(
@@ -1094,6 +1130,8 @@ async fn cmd_agent_temp(workspace: &str, task: &str, instructions: &str, runtime
             "local",
             runtime,
             "temp",
+            None,
+            None,
         )
         .await
     {
@@ -1184,7 +1222,7 @@ async fn cmd_delegate(workspace: &str, agent: &str, task: &str, continue_thread:
                     workspace: workspace.to_string(),
                     task: task.to_string(),
                     created_at: chrono::Utc::now().to_rfc3339(),
-                    kind: "normal".to_string(),
+                    kind: "background".to_string(),
                 },
             );
             let _ = config::CliConfig::save_pending(&pending);
@@ -1434,7 +1472,7 @@ async fn cmd_reply(workspace: &str, thread_id: &str, message: &str) {
                     workspace: workspace.to_string(),
                     task: message.to_string(),
                     created_at: chrono::Utc::now().to_rfc3339(),
-                    kind: "normal".to_string(),
+                    kind: "background".to_string(),
                 },
             );
             let _ = config::CliConfig::save_pending(&pending);

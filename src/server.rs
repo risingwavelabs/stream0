@@ -33,6 +33,7 @@ pub struct AppState {
     pub db: Database,
     /// Notifies the local daemon when new inbox messages arrive.
     pub inbox_notify: tokio::sync::Notify,
+    pub slack_token: Option<String>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -69,8 +70,12 @@ struct RegisterAgentRequest {
     machine_id: String,
     #[serde(default = "default_runtime")]
     runtime: String,
-    #[serde(default = "default_kind_normal")]
+    #[serde(default = "default_kind_background")]
     kind: String,
+    #[serde(default)]
+    webhook_url: Option<String>,
+    #[serde(default)]
+    slack_channel: Option<String>,
 }
 
 fn default_machine_id() -> String {
@@ -81,8 +86,8 @@ fn default_runtime() -> String {
     "auto".to_string()
 }
 
-fn default_kind_normal() -> String {
-    "normal".to_string()
+fn default_kind_background() -> String {
+    "background".to_string()
 }
 
 #[derive(Deserialize)]
@@ -301,7 +306,7 @@ pub(crate) async fn process_inbox_message_side_effects(
 async fn health_handler() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "healthy",
-        "version": "0.1.0"
+        "version": env!("CARGO_PKG_VERSION")
     }))
 }
 
@@ -325,17 +330,18 @@ async fn send_inbox_message_handler(
         return e;
     }
 
-    if matches!(req.msg_type.as_str(), "request" | "answer") {
+    let valid_types = ["request", "question", "answer", "done", "failed", "message", "started"];
+
+    // Only verify agent exists for new requests. Response messages (done, failed,
+    // started, answer) target the lead agent which is not in the agents table.
+    let response_types = ["done", "failed", "started", "answer"];
+    if !response_types.contains(&req.msg_type.as_str()) {
         match state.db.get_agent(&workspace_name, &agent_name) {
             Ok(Some(_)) => {}
             Ok(None) => return error_response(StatusCode::NOT_FOUND, "agent not found"),
             Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
         }
     }
-
-    let valid_types = [
-        "request", "question", "answer", "done", "failed", "message", "started",
-    ];
     if !valid_types.contains(&req.msg_type.as_str()) {
         return error_response(StatusCode::BAD_REQUEST, "invalid message type");
     }
@@ -380,7 +386,7 @@ async fn get_inbox_messages_handler(
         return e;
     }
 
-    // Don't require agent to be registered — leads poll their inbox
+    // Don't require agent to be registered - leads poll their inbox
     // without being registered as agents in the agents table.
 
     let timeout = params.timeout.unwrap_or(0.0).clamp(0.0, 30.0);
@@ -462,19 +468,20 @@ async fn register_agent_handler(
         return e;
     }
 
-    // Check machine ownership if not "local"
-    if req.machine_id != "local" {
-        match state.db.get_machine_owner(&req.machine_id) {
-            Ok(Some(owner)) if owner == caller.user.id => {}
-            Ok(Some(_)) => {
-                return error_response(StatusCode::FORBIDDEN, "you don't own this machine");
-            }
-            Ok(None) => {
-                return error_response(StatusCode::NOT_FOUND, "machine not found");
-            }
-            Err(e) => {
-                return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-            }
+    // Validate machine exists and caller owns it
+    match state.db.get_machine_owner(&req.machine_id) {
+        Ok(Some(owner)) if req.machine_id == "local" || owner == caller.user.id => {}
+        Ok(Some(_)) => {
+            return error_response(StatusCode::FORBIDDEN, "you don't own this machine");
+        }
+        Ok(None) if req.machine_id == "local" => {
+            return error_response(StatusCode::BAD_REQUEST, "no local machine available. This server was started with --no-local. Register a machine first: b0 machine join <server-url> --name <name> --key <key>");
+        }
+        Ok(None) => {
+            return error_response(StatusCode::NOT_FOUND, "machine not found");
+        }
+        Err(e) => {
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
         }
     }
 
@@ -487,6 +494,8 @@ async fn register_agent_handler(
         &req.runtime,
         &caller.user.id,
         &req.kind,
+        req.webhook_url.as_deref(),
+        req.slack_channel.as_deref(),
     ) {
         Ok(agent) => (
             StatusCode::CREATED,
@@ -777,6 +786,8 @@ struct CreateCronRequest {
     agent: String,
     schedule: String,
     task: String,
+    #[serde(default)]
+    end_date: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -810,6 +821,7 @@ async fn create_cron_handler(
         &req.schedule,
         &req.task,
         &caller.user.id,
+        req.end_date.as_deref(),
     ) {
         Ok(job) => (
             StatusCode::CREATED,
@@ -993,6 +1005,11 @@ async fn create_task_handler(
     let thread_id = format!("thread-{}", &uuid::Uuid::new_v4().to_string()[..8]);
     let from_id = format!("web-{}", caller.user.id);
 
+    // Check that "local" machine exists (it won't if server was started with --no-local)
+    if let Ok(None) = state.db.get_machine_owner("local") {
+        return error_response(StatusCode::BAD_REQUEST, "no local machine available. This server was started with --no-local. Register a machine first: b0 machine join <server-url> --name <name> --key <key>");
+    }
+
     // Auto-create a temp agent for this task
     let agent_name = format!("task-{}", &uuid::Uuid::new_v4().to_string()[..8]);
     let default_instructions = "You are a helpful assistant. Complete the task. Be concise.";
@@ -1005,6 +1022,8 @@ async fn create_task_handler(
         "auto",
         &caller.user.id,
         "temp",
+        None,
+        None,
     ) {
         return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
     }
@@ -2493,7 +2512,7 @@ fn print_banner(
 
 // --- Server ---
 
-pub async fn run(config: ServerConfig) {
+pub async fn run(config: ServerConfig, no_local: bool) {
     // Ensure DB parent directory exists
     if let Some(parent) = std::path::Path::new(&config.db_path).parent() {
         std::fs::create_dir_all(parent).expect("failed to create database directory");
@@ -2543,8 +2562,10 @@ pub async fn run(config: ServerConfig) {
     };
 
     // Auto-register "local" machine owned by admin
-    if let Ok(Some(admin_id)) = db.get_admin_user_id() {
-        let _ = db.register_machine("local", &admin_id);
+    if !no_local {
+        if let Ok(Some(admin_id)) = db.get_admin_user_id() {
+            let _ = db.register_machine("local", &admin_id);
+        }
     }
 
     // Resolve API key for dashboard URL: from first start or CLI config
@@ -2564,16 +2585,15 @@ pub async fn run(config: ServerConfig) {
             .map(|(k, n, i)| (k.as_str(), n.as_str(), i.as_str())),
     );
 
-    let state = Arc::new(AppState {
-        db,
-        inbox_notify: tokio::sync::Notify::new(),
-    });
+    let state = Arc::new(AppState { db, inbox_notify: tokio::sync::Notify::new(), slack_token: config.slack_token.clone() });
 
     // Spawn daemon for "local" machine
-    let daemon_state = state.clone();
-    tokio::spawn(async move {
-        daemon::run_local(daemon_state, workspace_root).await;
-    });
+    if !no_local {
+        let daemon_state = state.clone();
+        tokio::spawn(async move {
+            daemon::run_local(daemon_state, workspace_root).await;
+        });
+    }
 
     // Spawn scheduler for cron jobs
     let scheduler_state = state.clone();

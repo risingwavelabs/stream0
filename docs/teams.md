@@ -1,6 +1,6 @@
-# Teams
+# Workspaces
 
-Multiple people can share a Box0 server. Each person gets their own API key and can be added to groups for shared access.
+Multiple people can share a Box0 server. Each person gets their own API key and can be added to workspaces for shared access.
 
 ## Create a user
 
@@ -12,14 +12,14 @@ b0 invite alice
 
 This prints Alice's API key.
 
-## Create a shared group
+## Create a shared workspace
 
 ```bash
-b0 group create dev-team
+b0 workspace create dev-team
 ```
 
 ```bash
-b0 group add-member dev-team <alice-user-id>
+b0 workspace add-member dev-team <alice-user-id>
 ```
 
 ## Connect from another machine
@@ -30,32 +30,31 @@ On Alice's laptop:
 b0 login http://server:8080 --key <alice-key>
 ```
 
-The CLI auto-configures the default group from Alice's membership.
+The CLI auto-configures the default workspace from Alice's membership.
 
-## Work within a group
+## Work within a workspace
 
 ```bash
-b0 worker add --group dev-team reviewer --instructions "Code reviewer."
+b0 agent add reviewer --workspace dev-team --instructions "Code reviewer."
 ```
 
 ```bash
-b0 delegate --group dev-team reviewer "Review src/main.rs"
+b0 delegate --workspace dev-team reviewer "Review src/main.rs"
 ```
 
 ```bash
 b0 wait
 ```
 
-## How groups work
+## How workspaces work
 
-- Each user gets a personal group on creation.
-- Users can be in multiple groups. Use `--group` to select which one.
-- Workers in a group are visible to all group members.
-- Workers outside a group are private to the creator.
-- Only the worker creator can remove or update their workers.
+- Each user gets a personal workspace on creation.
+- Users can be in multiple workspaces. Use `--workspace` to select which one.
+- Agents in a workspace are visible to all workspace members.
+- Only the agent creator can remove or update their agents.
 
-## List groups
+## List workspaces
 
 ```bash
-b0 group ls
+b0 workspace ls
 ```

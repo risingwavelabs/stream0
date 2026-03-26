@@ -12,22 +12,22 @@ b0 server [--host] [--port] [--db]         Start server
 b0 login <url> --key <key>                 Connect from another machine
 b0 logout                                  Disconnect
 b0 reset                                   Clean slate (deletes DB, config, skills)
-b0 status                                  Show connection info
+b0 status                                  Show connection info and pending tasks
 b0 invite <name>                           Create user (admin only)
 ```
 
-## Workers
+## Agents
 
 ```
-b0 worker add <name> --instructions "..." [--description "..."] [--group <g>] [--node <n>] [--runtime auto|claude|codex]
-b0 worker ls [--group <g>]
-b0 worker info <name> [--group <g>]
-b0 worker update <name> [--group <g>]
-b0 worker stop <name> [--group <g>]
-b0 worker start <name> [--group <g>]
-b0 worker logs <name> [--group <g>]
-b0 worker remove <name> [--group <g>]
-b0 worker temp "<task>" [--group <g>]      One-off task (non-blocking)
+b0 agent add <name> --instructions "..." [--description "..."] [--workspace <w>] [--machine <m>] [--runtime auto|claude|codex] [--webhook <url>] [--slack <channel>]
+b0 agent ls [--workspace <w>]
+b0 agent info <name> [--workspace <w>]
+b0 agent update <name> --instructions "..." [--workspace <w>]
+b0 agent stop <name> [--workspace <w>]
+b0 agent start <name> [--workspace <w>]
+b0 agent logs <name> [--workspace <w>]
+b0 agent remove <name> [--workspace <w>]
+b0 agent temp "<task>" [--workspace <w>]   One-off task (non-blocking, auto-cleanup)
 ```
 
 ## Task delegation
@@ -35,33 +35,48 @@ b0 worker temp "<task>" [--group <g>]      One-off task (non-blocking)
 These commands are primarily used by agents, not humans.
 
 ```
-b0 delegate <worker> "<task>" [--group <g>]       New task (non-blocking)
-b0 delegate --thread <id> <worker> "<message>"    Continue conversation
-b0 delegate <worker>                              Read task from stdin
-b0 wait                                           Collect results
-b0 reply [--group <g>] <thread-id> "<answer>"     Answer a worker question
+b0 delegate <agent> "<task>" [--workspace <w>]       New task (non-blocking)
+b0 delegate --thread <id> <agent> "<message>"        Continue conversation
+b0 delegate <agent>                                  Read task from stdin
+b0 wait [--all] [--timeout <sec>]                    Collect results
+b0 reply [--workspace <w>] <thread-id> "<answer>"    Answer an agent's question
+b0 threads [--workspace <w>] [--limit <n>]           List recent conversations
 ```
 
 ### How delegation works
 
-1. `b0 delegate` sends a task to a worker's inbox and returns immediately with a thread ID.
-2. The node daemon picks up the task, spawns a Claude Code or Codex process, and executes it.
-3. `b0 wait` blocks until all pending tasks have results, then prints them.
-4. For multi-turn conversations, pass `--thread <id>` to continue an existing conversation. The worker resumes its Claude session with full history.
+1. `b0 delegate` sends a task to an agent's inbox and returns immediately with a thread ID.
+2. The daemon picks up the task, spawns a Claude Code or Codex process, and executes it.
+3. `b0 wait` blocks until a pending task has results, then prints them. Use `--all` to wait for everything.
+4. For multi-turn conversations, pass `--thread <id>` to continue an existing conversation. The agent resumes its Claude session with full history.
 
-## Nodes
-
-```
-b0 node join <url> [--name] [--key]        Join as worker node
-b0 node ls                                 List nodes
-```
-
-## Groups
+## Cron jobs
 
 ```
-b0 group create <name>                     Create group
-b0 group ls                                List your groups
-b0 group add-member <group> <user-id>      Add user to group
+b0 cron add --every <interval> "<task>" [--agent <name>] [--workspace <w>] [--webhook <url>] [--slack <channel>] [--until <date>]
+b0 cron ls [--workspace <w>]
+b0 cron remove <id> [--workspace <w>]
+b0 cron enable <id> [--workspace <w>]
+b0 cron disable <id> [--workspace <w>]
+```
+
+Intervals: `30s`, `5m`, `1h`, `6h`, `1d`. Optional end date: `2026-04-24` or `2026-04-24T12:00:00Z`.
+
+If `--agent` is omitted, a temporary agent is auto-created and cleaned up when the cron job is removed.
+
+## Machines
+
+```
+b0 machine join <url> [--name <id>] [--key <key>]    Join as remote machine
+b0 machine ls                                         List machines
+```
+
+## Workspaces
+
+```
+b0 workspace create <name>                 Create workspace
+b0 workspace ls                            List your workspaces
+b0 workspace add-member <workspace> <user-id>   Add user to workspace
 ```
 
 ## Skills
@@ -80,4 +95,4 @@ Skills teach your agent how to use Box0. When installed:
 - **Claude Code**: writes a skill file to `~/.claude/skills/b0/SKILL.md`. Claude Code reads this and learns the `b0 delegate` / `b0 wait` workflow.
 - **Codex**: appends a marked section to `~/.codex/AGENTS.md`.
 
-After installation, your agent knows how to create workers, delegate tasks, and collect results without any manual instruction.
+After installation, your agent knows how to create agents, delegate tasks, and collect results without any manual instruction.

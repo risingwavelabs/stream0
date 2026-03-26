@@ -1,6 +1,6 @@
 # Multi-machine setup
 
-Distribute workers across multiple machines. Each machine uses its own local credentials. No secrets are forwarded.
+Distribute agents across multiple machines. Each machine uses its own local credentials. No secrets are forwarded.
 
 ## Topology
 
@@ -17,7 +17,7 @@ Distribute workers across multiple machines. Each machine uses its own local cre
               │                  │                  │
     ┌─────────▼────────┐ ┌───────▼──────────┐ ┌────▼─────────────┐
     │   Machine A      │ │   Machine B      │ │   Machine C      │
-    │   (local node)   │ │  (gpu-box node)  │ │  (cloud node)    │
+    │   (local)        │ │   (gpu-box)      │ │   (cloud)        │
     │                  │ │                  │ │                  │
     │ ┌──────────────┐ │ │ ┌──────────────┐ │ │ ┌──────────────┐ │
     │ │  ux-expert   │ │ │ │  ml-agent    │ │ │ │  reviewer    │ │
@@ -37,22 +37,22 @@ The server must bind to `0.0.0.0` for remote machines to connect:
 b0 server --host 0.0.0.0
 ```
 
-### 2. Join a remote node
+### 2. Join a remote machine
 
 On the remote machine, join the server:
 
 ```bash
-b0 node join http://server-ip:8080 --name gpu-box --key <key>
+b0 machine join http://server-ip:8080 --name gpu-box --key <key>
 ```
 
-The node daemon starts polling the server for tasks.
+The daemon starts polling the server for tasks.
 
-### 3. Assign workers to the node
+### 3. Assign agents to the machine
 
 Back on the server machine:
 
 ```bash
-b0 worker add ml-agent --instructions "ML specialist." --node gpu-box
+b0 agent add ml-agent --instructions "ML specialist." --machine gpu-box
 ```
 
 ### 4. Delegate tasks
@@ -65,20 +65,20 @@ b0 delegate ml-agent "Analyze this dataset."
 b0 wait
 ```
 
-The task is routed to the remote machine. Claude CLI runs there using that machine's local credentials and compute.
+The task is routed to the remote machine. Claude Code or Codex runs there using that machine's local credentials and compute.
 
 ## How it works
 
-- Remote nodes poll the server via HTTP for new tasks.
-- Each node runs its own daemon that spawns Claude Code or Codex locally.
-- Workers use the machine's existing authentication (OAuth or API key). No credential forwarding.
-- Only the node owner can deploy workers to their machine.
-- The server handles routing: tasks go to whichever node owns the target worker.
+- Remote machines use long-polling (`/machines/{id}/poll`) with up to 30s timeout for efficient task pickup.
+- Each machine runs its own daemon that spawns Claude Code or Codex locally.
+- Agents use the machine's existing authentication (OAuth or API key). No credential forwarding.
+- Only the machine owner can deploy agents to their machine.
+- The server handles routing: tasks go to whichever machine owns the target agent.
 
-## List nodes
+## List machines
 
 ```bash
-b0 node ls
+b0 machine ls
 ```
 
-Shows all connected nodes and their status.
+Shows all connected machines and their status.

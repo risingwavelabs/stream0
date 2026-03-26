@@ -76,6 +76,10 @@ pub struct Agent {
     pub kind: String,
     #[serde(default = "default_timeout")]
     pub timeout: i64,
+    #[serde(default)]
+    pub webhook_url: Option<String>,
+    #[serde(default)]
+    pub slack_channel: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -97,7 +101,7 @@ pub struct AgentThreadSummary {
 }
 
 fn default_kind() -> String {
-    "normal".to_string()
+    "background".to_string()
 }
 
 fn default_timeout() -> i64 {
@@ -242,6 +246,7 @@ pub struct CronJob {
     pub task: String,
     pub enabled: bool,
     pub last_run: Option<DateTime<Utc>>,
+    pub end_date: Option<DateTime<Utc>>,
     pub created_by: String,
     pub created_at: DateTime<Utc>,
 }
@@ -316,8 +321,10 @@ impl Database {
                 runtime TEXT NOT NULL DEFAULT 'auto',
                 status TEXT NOT NULL DEFAULT 'active',
                 registered_by TEXT NOT NULL DEFAULT '',
-                kind TEXT NOT NULL DEFAULT 'normal',
+                kind TEXT NOT NULL DEFAULT 'background',
                 timeout INTEGER NOT NULL DEFAULT 1800,
+                webhook_url TEXT,
+                slack_channel TEXT,
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
                 PRIMARY KEY (workspace_name, name)
             );
@@ -333,6 +340,7 @@ impl Database {
                 task TEXT NOT NULL,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 last_run TEXT,
+                end_date TEXT,
                 created_by TEXT NOT NULL,
                 created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             );
@@ -430,9 +438,12 @@ impl Database {
             [],
         );
         let _ = conn.execute(
-            "ALTER TABLE agents ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal'",
+            "ALTER TABLE agents ADD COLUMN kind TEXT NOT NULL DEFAULT 'background'",
             [],
         );
+        let _ = conn.execute("ALTER TABLE agents ADD COLUMN webhook_url TEXT", []);
+        let _ = conn.execute("ALTER TABLE agents ADD COLUMN slack_channel TEXT", []);
+        let _ = conn.execute("ALTER TABLE cron_jobs ADD COLUMN end_date TEXT", []);
         // Migrate old temp column to kind
         let _ = conn.execute("UPDATE agents SET kind = 'temp' WHERE temp = 1", []);
         // Existing databases were created before timeout was configurable and all
@@ -823,7 +834,7 @@ impl Database {
     // --- Agents ---
 
     fn parse_agent_row(row: &rusqlite::Row) -> rusqlite::Result<Agent> {
-        let ts: String = row.get(9)?;
+        let ts: String = row.get(11)?;
         Ok(Agent {
             name: row.get(0)?,
             description: row.get(1)?,
@@ -834,11 +845,13 @@ impl Database {
             registered_by: row.get(6)?,
             kind: row.get(7)?,
             timeout: row.get(8)?,
+            webhook_url: row.get(9)?,
+            slack_channel: row.get(10)?,
             created_at: Database::parse_ts(&ts),
         })
     }
 
-    const AGENT_COLS: &str = "name, description, instructions, machine_id, runtime, status, registered_by, kind, timeout, created_at";
+    const AGENT_COLS: &str = "name, description, instructions, machine_id, runtime, status, registered_by, kind, timeout, webhook_url, slack_channel, created_at";
 
     pub fn register_agent(
         &self,
@@ -850,11 +863,13 @@ impl Database {
         runtime: &str,
         registered_by: &str,
         kind: &str,
+        webhook_url: Option<&str>,
+        slack_channel: Option<&str>,
     ) -> Result<Agent> {
         let conn = self.conn.lock().unwrap();
 
         conn.execute(
-            "INSERT INTO agents (workspace_name, name, description, instructions, machine_id, runtime, registered_by, kind, timeout) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO agents (workspace_name, name, description, instructions, machine_id, runtime, registered_by, kind, timeout, webhook_url, slack_channel) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 workspace_name,
                 name,
@@ -864,7 +879,9 @@ impl Database {
                 runtime,
                 registered_by,
                 kind,
-                DEFAULT_AGENT_TIMEOUT_SECS
+                DEFAULT_AGENT_TIMEOUT_SECS,
+                webhook_url,
+                slack_channel,
             ],
         )?;
 
@@ -884,6 +901,8 @@ impl Database {
             registered_by: registered_by.to_string(),
             kind: kind.to_string(),
             timeout: DEFAULT_AGENT_TIMEOUT_SECS,
+            webhook_url: webhook_url.map(|s| s.to_string()),
+            slack_channel: slack_channel.map(|s| s.to_string()),
             created_at: Self::parse_ts(&ts),
         })
     }
@@ -891,7 +910,7 @@ impl Database {
     pub fn list_agents(&self, workspace_name: &str) -> Result<Vec<Agent>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            &format!("SELECT {} FROM agents WHERE workspace_name = ?1 AND kind = 'normal' ORDER BY created_at ASC", Self::AGENT_COLS),
+            &format!("SELECT {} FROM agents WHERE workspace_name = ?1 AND kind = 'background' ORDER BY created_at ASC", Self::AGENT_COLS),
         )?;
         let agents = stmt
             .query_map(params![workspace_name], Self::parse_agent_row)?
@@ -1018,12 +1037,12 @@ impl Database {
     ) -> Result<Vec<(String, Agent)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT workspace_name, name, description, instructions, machine_id, runtime, status, registered_by, kind, timeout, created_at FROM agents WHERE machine_id = ?1 AND status = 'active'",
+            "SELECT workspace_name, name, description, instructions, machine_id, runtime, status, registered_by, kind, timeout, webhook_url, slack_channel, created_at FROM agents WHERE machine_id = ?1 AND status = 'active'",
         )?;
         let agents = stmt
             .query_map(params![machine_id], |row| {
                 let workspace: String = row.get(0)?;
-                let ts: String = row.get(10)?;
+                let ts: String = row.get(12)?;
                 Ok((
                     workspace,
                     Agent {
@@ -1036,6 +1055,8 @@ impl Database {
                         registered_by: row.get(7)?,
                         kind: row.get(8)?,
                         timeout: row.get(9)?,
+                        webhook_url: row.get(10)?,
+                        slack_channel: row.get(11)?,
                         created_at: Database::parse_ts(&ts),
                     },
                 ))
@@ -1394,13 +1415,15 @@ impl Database {
         schedule: &str,
         task: &str,
         created_by: &str,
+        end_date: Option<&str>,
     ) -> Result<CronJob> {
         let conn = self.conn.lock().unwrap();
         let id = format!("cron-{}", &Uuid::new_v4().to_string()[..8]);
         conn.execute(
-            "INSERT INTO cron_jobs (id, workspace_name, agent, schedule, task, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, workspace_name, agent, schedule, task, created_by],
+            "INSERT INTO cron_jobs (id, workspace_name, agent, schedule, task, created_by, end_date) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, workspace_name, agent, schedule, task, created_by, end_date],
         )?;
+        let parsed_end = end_date.map(|s| Self::parse_ts(s));
         Ok(CronJob {
             id,
             workspace_name: workspace_name.to_string(),
@@ -1409,34 +1432,40 @@ impl Database {
             task: task.to_string(),
             enabled: true,
             last_run: None,
+            end_date: parsed_end,
             created_by: created_by.to_string(),
             created_at: Utc::now(),
         })
     }
 
+    fn parse_cron_row(row: &rusqlite::Row) -> rusqlite::Result<CronJob> {
+        let last_run_str: Option<String> = row.get(6)?;
+        let end_date_str: Option<String> = row.get(7)?;
+        let ts: String = row.get(9)?;
+        let enabled: i32 = row.get(5)?;
+        Ok(CronJob {
+            id: row.get(0)?,
+            workspace_name: row.get(1)?,
+            agent: row.get(2)?,
+            schedule: row.get(3)?,
+            task: row.get(4)?,
+            enabled: enabled != 0,
+            last_run: last_run_str.map(|s| Database::parse_ts(&s)),
+            end_date: end_date_str.map(|s| Database::parse_ts(&s)),
+            created_by: row.get(8)?,
+            created_at: Database::parse_ts(&ts),
+        })
+    }
+
+    const CRON_COLS: &str = "id, workspace_name, agent, schedule, task, enabled, last_run, end_date, created_by, created_at";
+
     pub fn list_cron_jobs(&self, workspace_name: &str) -> Result<Vec<CronJob>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, workspace_name, agent, schedule, task, enabled, last_run, created_by, created_at
-             FROM cron_jobs WHERE workspace_name = ?1 ORDER BY created_at",
+            &format!("SELECT {} FROM cron_jobs WHERE workspace_name = ?1 ORDER BY created_at", Self::CRON_COLS),
         )?;
         let jobs = stmt
-            .query_map(params![workspace_name], |row| {
-                let last_run_str: Option<String> = row.get(6)?;
-                let ts: String = row.get(8)?;
-                let enabled: i32 = row.get(5)?;
-                Ok(CronJob {
-                    id: row.get(0)?,
-                    workspace_name: row.get(1)?,
-                    agent: row.get(2)?,
-                    schedule: row.get(3)?,
-                    task: row.get(4)?,
-                    enabled: enabled != 0,
-                    last_run: last_run_str.map(|s| Database::parse_ts(&s)),
-                    created_by: row.get(7)?,
-                    created_at: Database::parse_ts(&ts),
-                })
-            })?
+            .query_map(params![workspace_name], Self::parse_cron_row)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(jobs)
     }
@@ -1444,25 +1473,10 @@ impl Database {
     pub fn get_all_enabled_cron_jobs(&self) -> Result<Vec<CronJob>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, workspace_name, agent, schedule, task, enabled, last_run, created_by, created_at
-             FROM cron_jobs WHERE enabled = 1",
+            &format!("SELECT {} FROM cron_jobs WHERE enabled = 1", Self::CRON_COLS),
         )?;
         let jobs = stmt
-            .query_map([], |row| {
-                let last_run_str: Option<String> = row.get(6)?;
-                let ts: String = row.get(8)?;
-                Ok(CronJob {
-                    id: row.get(0)?,
-                    workspace_name: row.get(1)?,
-                    agent: row.get(2)?,
-                    schedule: row.get(3)?,
-                    task: row.get(4)?,
-                    enabled: true,
-                    last_run: last_run_str.map(|s| Database::parse_ts(&s)),
-                    created_by: row.get(7)?,
-                    created_at: Database::parse_ts(&ts),
-                })
-            })?
+            .query_map([], Self::parse_cron_row)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(jobs)
     }
@@ -2329,17 +2343,8 @@ mod tests {
         let db = test_db();
         let (alice, _) = db.create_user("alice", false).unwrap();
 
-        db.register_agent(
-            "alice",
-            "reviewer",
-            "Code reviewer",
-            "Review code.",
-            "local",
-            "auto",
-            &alice.id,
-            "normal",
-        )
-        .unwrap();
+        db.register_agent("alice", "reviewer", "Code reviewer", "Review code.", "local", "auto", &alice.id, "background", None, None)
+            .unwrap();
 
         let agents = db.list_agents("alice").unwrap();
         assert_eq!(agents.len(), 1);
@@ -2353,17 +2358,8 @@ mod tests {
         // But visible in shared workspace
         db.create_workspace("team", &alice.id).unwrap();
         db.add_workspace_member("team", &bob.id).unwrap();
-        db.register_agent(
-            "team",
-            "shared-reviewer",
-            "Shared reviewer",
-            "Review.",
-            "local",
-            "auto",
-            &alice.id,
-            "normal",
-        )
-        .unwrap();
+        db.register_agent("team", "shared-reviewer", "Shared reviewer", "Review.", "local", "auto", &alice.id, "background", None, None)
+            .unwrap();
 
         let team_agents = db.list_agents("team").unwrap();
         assert_eq!(team_agents.len(), 1);
@@ -2395,10 +2391,8 @@ mod tests {
         db.create_workspace("team", &alice.id).unwrap();
         db.add_workspace_member("team", &bob.id).unwrap();
 
-        db.register_agent(
-            "team", "reviewer", "Reviewer", "Review.", "local", "auto", &alice.id, "normal",
-        )
-        .unwrap();
+        db.register_agent("team", "reviewer", "Reviewer", "Review.", "local", "auto", &alice.id, "background", None, None)
+            .unwrap();
 
         // Bob cannot remove Alice's agent
         let result = db.remove_agent("team", "reviewer", &bob.id);

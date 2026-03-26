@@ -101,6 +101,15 @@ pub async fn run(state: SharedState) {
         };
 
         for job in jobs {
+            // Check end_date: disable expired crons
+            if let Some(end) = job.end_date {
+                if chrono::Utc::now() > end {
+                    tracing::info!(cron_id = job.id, "Scheduler: cron job expired, disabling");
+                    let _ = state.db.set_cron_enabled(&job.workspace_name, &job.id, false);
+                    continue;
+                }
+            }
+
             if !should_run(&job) {
                 continue;
             }
