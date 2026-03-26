@@ -2,7 +2,7 @@
 set -e
 
 # Box0 installer
-# Usage: curl -sSL https://box0.dev/install.sh | sh
+# Usage: curl -sSL https://raw.githubusercontent.com/risingwavelabs/box0/main/install.sh | sh
 
 REPO="risingwavelabs/box0"
 INSTALL_DIR="${B0_INSTALL_DIR:-/usr/local/bin}"

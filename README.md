@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@box0/cli)](https://www.npmjs.com/package/@box0/cli)
 [![license](https://img.shields.io/github/license/risingwavelabs/box0)](LICENSE)
 [![docs](https://img.shields.io/badge/docs-box0-blue)](https://github.com/risingwavelabs/box0/tree/main/docs)
-[![SKILL.md](https://img.shields.io/badge/SKILL.md-agent%20onboarding-black)](https://box0.dev/skill.md)
+[![SKILL.md](https://img.shields.io/badge/SKILL.md-agent%20onboarding-black)](SKILL.md)
 
 Box0 runs multiple AI agents in parallel across your machines. You create agents with different roles, delegate tasks to them, and collect results. It works with Claude Code and Codex. Single Rust binary, no dependencies.
 
@@ -54,7 +54,7 @@ Your AI (Claude Code or Codex) delegates work with `b0 delegate`, waits for resu
 npx skills add risingwavelabs/skills --skill b0
 ```
 
-Or read [SKILL.md](https://box0.dev/skill.md) directly.
+Or read [SKILL.md](SKILL.md) directly.
 
 Your agent sends tasks to the Box0 server via `b0 delegate`. The server stores them in an inbox. A node daemon polls the inbox, spawns a separate Claude Code (or Codex) process for each worker, and writes the results back. Your agent calls `b0 wait` to collect the responses.
 
@@ -66,7 +66,7 @@ Agent runs use a 30 minute default execution timeout. This prevents longer workf
 Install:
 
 ```bash
-curl -sSL https://box0.dev/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/risingwavelabs/box0/main/install.sh | sh
 ```
 
 Or via npm:
