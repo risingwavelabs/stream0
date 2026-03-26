@@ -1,4 +1,4 @@
-# Box0: Open-Source Multi-Agent Platform
+# Box0: Multi-Agent Platform
 
 [![npm](https://img.shields.io/npm/v/@box0/cli)](https://www.npmjs.com/package/@box0/cli)
 [![license](https://img.shields.io/github/license/risingwavelabs/box0)](LICENSE)
