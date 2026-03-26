@@ -7,9 +7,9 @@
 
 Box0 runs multiple AI agents in parallel across your machines. You create agents with different roles, delegate tasks to them, and collect results. It works with Claude Code and Codex. Single Rust binary, no dependencies.
 
-  **Long-running** - agents that persist across sessions and never disappear
-  **Collaborative** - shared across machines and team members
-  **Proactive** - cron jobs, webhooks, Slack notifications
+  - **Long-running**: agents that persist across sessions and never disappear
+  - **Collaborative**: shared across machines and team members
+  - **Proactive**: cron jobs, webhooks, Slack notifications
 
 <p align="center">
   <img src="docs/hero.svg" alt="Box0 Architecture" width="800">
