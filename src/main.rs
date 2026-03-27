@@ -735,10 +735,7 @@ async fn main() {
             SkillCommand::Install { agent } => {
                 match agent.as_str() {
                     "claude-code" => cmd_skill_install_claude_code().await,
-                    "codex" => {
-                        eprintln!("Codex skill install not yet supported. Use: npx skills add risingwavelabs/skills --skill b0");
-                        std::process::exit(1);
-                    }
+                    "codex" => cmd_skill_install_codex().await,
                     _ => {
                         eprintln!("Unknown agent: {}. Supported: claude-code", agent);
                         std::process::exit(1);
@@ -1668,4 +1665,58 @@ async fn cmd_skill_install_claude_code() {
         std::process::exit(1);
     }
     println!("Skill installed for Claude Code.");
+}
+
+async fn cmd_skill_install_codex() {
+    let url = "https://raw.githubusercontent.com/risingwavelabs/skills/main/skills/b0/SKILL.md";
+    let client = reqwest::Client::new();
+    let resp = match client.get(url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error: failed to download skill: {}", e);
+            std::process::exit(1);
+        }
+    };
+    if !resp.status().is_success() {
+        eprintln!("Error: failed to download skill (HTTP {})", resp.status());
+        std::process::exit(1);
+    }
+    let content = match resp.text().await {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Error: failed to read skill content: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let agents_path = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".codex")
+        .join("AGENTS.md");
+    if let Some(parent) = agents_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    // Remove old b0 section if present, then append
+    let marker_start = "<!-- box0-skill-start -->";
+    let marker_end = "<!-- box0-skill-end -->";
+    let existing = std::fs::read_to_string(&agents_path).unwrap_or_default();
+    let cleaned = if let (Some(start), Some(end)) = (existing.find(marker_start), existing.find(marker_end)) {
+        format!("{}{}", &existing[..start], &existing[end + marker_end.len()..])
+    } else {
+        existing
+    };
+
+    let new_content = format!(
+        "{}\n{}\n{}\n{}\n",
+        cleaned.trim_end(),
+        marker_start,
+        content,
+        marker_end,
+    );
+    if let Err(e) = std::fs::write(&agents_path, new_content) {
+        eprintln!("Error: failed to write AGENTS.md: {}", e);
+        std::process::exit(1);
+    }
+    println!("Skill installed for Codex.");
 }
