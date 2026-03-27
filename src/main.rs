@@ -91,6 +91,9 @@ enum Command {
         /// Non-blocking: return immediately if nothing is done yet
         #[arg(long)]
         timeout: Option<f64>,
+        /// Output results as JSON (one object per result)
+        #[arg(long)]
+        json: bool,
     },
     /// Reply to an agent's question
     Reply {
@@ -1004,7 +1007,7 @@ async fn main() {
             .await;
         }
 
-        Command::Wait { all, timeout } => cmd_wait(all, timeout).await,
+        Command::Wait { all, timeout, json } => cmd_wait(all, timeout, json).await,
 
         Command::Reply {
             workspace,
@@ -1329,7 +1332,7 @@ async fn cmd_delegate(workspace: &str, agent: &str, task: &str, continue_thread:
     }
 }
 
-async fn cmd_wait(wait_all: bool, timeout: Option<f64>) {
+async fn cmd_wait(wait_all: bool, timeout: Option<f64>, json_output: bool) {
     let mut cfg = config::CliConfig::load();
     let lead_id = cfg.lead_id();
     let client = make_client(&cfg);
@@ -1418,7 +1421,11 @@ async fn cmd_wait(wait_all: bool, timeout: Option<f64>) {
                             status.remove(&agent_name);
                             clear_status(is_tty, status_lines_printed);
                             status_lines_printed = 0;
-                            println!("{} done ({}): {}", agent_name, elapsed, content);
+                            if json_output {
+                                println!("{}", serde_json::json!({"agent": agent_name, "thread": msg.thread_id, "status": "done", "elapsed": elapsed, "result": content}));
+                            } else {
+                                println!("--- {} done ({}) ---\n{}\n", agent_name, elapsed, content);
+                            }
                             pending.threads.remove(&msg.thread_id);
                             let _ = client.ack_message(workspace, &msg.id).await;
                             {
@@ -1440,7 +1447,11 @@ async fn cmd_wait(wait_all: bool, timeout: Option<f64>) {
                             status.remove(&agent_name);
                             clear_status(is_tty, status_lines_printed);
                             status_lines_printed = 0;
-                            eprintln!("{} failed ({}): {}", agent_name, elapsed, content);
+                            if json_output {
+                                println!("{}", serde_json::json!({"agent": agent_name, "thread": msg.thread_id, "status": "failed", "elapsed": elapsed, "result": content}));
+                            } else {
+                                eprintln!("--- {} failed ({}) ---\n{}\n", agent_name, elapsed, content);
+                            }
                             pending.threads.remove(&msg.thread_id);
                             let _ = client.ack_message(workspace, &msg.id).await;
                             {
